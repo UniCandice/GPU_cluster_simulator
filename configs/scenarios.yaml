@@ -1,0 +1,120 @@
+# Scenarios.
+#
+# GOVERNING RULE: an injection may only perturb PHYSICAL STATE -- achievable
+# clock, memory bandwidth, cooling efficiency, link availability -- or the
+# WORKLOAD's own parameters. No injection ever writes a telemetry value. Every
+# signature in the dashboard is an observed consequence.
+#
+# The `fault` flag is a ground-truth LABEL used to score the diagnosis view. It
+# is never consumed by the simulator itself.
+
+scenarios:
+
+  healthy:
+    fault: false
+    label: Healthy baseline
+    description: >
+      Nominal cluster, nominal workload. Establishes the reference for every
+      other scenario. Note that storage latency still spikes every 100
+      timesteps: field output is a legitimate phase, not a fault.
+    injections: []
+
+  straggler:
+    fault: true
+    tier: rank
+    label: Rank-level straggler
+    description: >
+      A single GPU loses 25% of its SM throughput to a co-resident process left
+      behind by a previous job -- a stale context that time-slices the device.
+      This is deliberately chosen to be INVISIBLE in the clock: the GPU still
+      boosts to its nominal clock and never sets a throttle bit; it is simply
+      slower. Its 127 peers are untouched, but the barrier means they all wait.
+      The peers report HIGH utilisation (spinning in the collective) with
+      FALLING occupancy, power and temperature; the victim is the only rank that
+      is genuinely busy, and the only one that runs hotter.
+    injections:
+      - at_iteration: 200
+        type: gpu_throughput_derate
+        target: {rack: 1, node: 2, gpu: 5}
+        factor: 0.75
+
+  network_domain:
+    fault: true
+    tier: rack
+    label: Rack network-domain degradation
+    description: >
+      An uplink bundle on rack 2's leaf switch fails, leaving the rack on 1 of
+      its 8 spine uplinks, and the surviving optic is the marginal one that took
+      the bundle down -- it carries traffic with a 2% frame error rate. A leaf
+      that was non-blocking is suddenly 8:1 oversubscribed for 32 ranks: queue
+      depth climbs, corrupted frames are dropped, and retransmission burns
+      further goodput on a link that has none to spare. Because the
+      decomposition places +/-z neighbours across racks, this hits exactly the
+      +/-z halo exchanges and leaves every intra-node and intra-rack exchange
+      untouched. Compute durations never change -- that is what separates a
+      fabric fault from a compute fault.
+    injections:
+      - at_iteration: 300
+        type: leaf_uplink_failure
+        target: {rack: 2}
+        uplinks_active: 1
+        error_rate: 0.02
+
+  thermal:
+    fault: true
+    tier: rack
+    label: Thermal throttling (cooling degradation)
+    description: >
+      Rack 1's cooling degrades to 30% capacity over 60 timesteps. Cold-aisle
+      inlet temperature is a rack property, so all 32 GPUs heat together with
+      the first-order lag of the thermal model. Once they cross the 84 C
+      slowdown threshold, clocks step down, compute slows, and power falls WITH
+      the clock -- the paired clock/power drop under sustained load is the
+      fingerprint that distinguishes throttling from an idle GPU.
+    injections:
+      - at_iteration: 250
+        type: cooling_degrade
+        target: {rack: 1}
+        efficiency: 0.30
+        ramp_iterations: 60
+
+  gpu_degradation:
+    fault: true
+    tier: gpu
+    label: GPU reliability degradation
+    description: >
+      One GPU's achievable memory bandwidth falls 15% as row remapping and
+      correctable-error handling eat into it, and its reliability governor caps
+      the clock at 90%. Because the solver is memory-bandwidth bound, this rank
+      slows and strangles the job. On rank spread, wait time and throughput it
+      is nearly indistinguishable from `straggler`; what separates them is
+      throttle_reason = RELIABILITY and the occupancy drop on the victim itself.
+    injections:
+      - at_iteration: 350
+        type: gpu_reliability_degrade
+        target: {rack: 3, node: 1, gpu: 2}
+        memory_bandwidth_factor: 0.85
+        clock_cap: 0.90
+
+  phase_change:
+    fault: false
+    tier: workload
+    label: Legitimate workload change (output campaign)
+    description: >
+      NOT A FAULT. At timestep 500 the run switches from periodic checkpointing
+      to a full-field output campaign: every 20 timesteps instead of every 100,
+      and 4x the data per output because instantaneous fields are written rather
+      than restart state. Throughput drops and storage latency rises and STAYS
+      risen, because background writeback never fully drains between outputs.
+      Every rank is affected identically, so rank spread stays tight; no GPU
+      throttles; no link errors; no queue growth in the fabric. A naive detector
+      fires on this. The absence of movement in the hardware channels is what
+      makes it separable.
+    injections:
+      - at_iteration: 500
+        type: workload_output_change
+        output_interval: 20
+        output_bytes_scale: 4.0
+
+# Order used by scripts/run_all.py and by the dashboard tabs.
+order: [healthy, straggler, network_domain, thermal, gpu_degradation, phase_change]

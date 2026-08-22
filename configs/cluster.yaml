@@ -1,0 +1,128 @@
+# Cluster hardware definition.
+#
+# Every constant here is a plausible order-of-magnitude value for an H100-SXM-class
+# node. None of them are calibrated against real fleet telemetry -- see README.md
+# ("Calibration") for how each would be fitted from DCGM counters and job traces.
+
+name: demo-cluster
+
+# --- Physical layout -------------------------------------------------------
+# One leaf switch per rack, so a rack is simultaneously a network domain and a
+# thermal domain. That co-location is what makes rack-scoped faults show up as a
+# contiguous block of ranks rather than a scatter.
+racks: 4
+nodes_per_rack: 4
+gpus_per_node: 8
+nics_per_node: 2
+
+# --- GPU ------------------------------------------------------------------
+gpu:
+  model: H100-SXM-class
+  memory_gb: 80.0
+
+  # Clocks. Real NVIDIA parts move in discrete steps, so throttling produces a
+  # staircase rather than a smooth ramp -- worth reproducing, it is visually
+  # distinctive in telemetry.
+  base_clock_mhz: 1755.0
+  min_clock_mhz: 1050.0
+  clock_step_mhz: 15.0
+
+  # Power. Dynamic power is driven by *occupancy*, not utilisation: a rank
+  # spinning on a barrier keeps a kernel resident (high utilisation) while doing
+  # no work (low occupancy, low power). See models/power.py.
+  idle_power_w: 70.0
+  max_power_w: 700.0
+  board_power_cap_w: 700.0
+  power_clock_exponent: 2.2      # dynamic power ~ V^2 f, with V ~ f over the DVFS range
+  power_ema_alpha: 0.35          # sensor smoothing
+  spin_occupancy: 0.05           # SM occupancy while spinning in a collective
+  spin_utilisation: 0.99         # ...but a resident kernel still reports ~100% busy
+
+  # Thermal. First-order lag: dT/dt = (P*R_th - (T - T_inlet)) / tau
+  # Steady state at 700 W and 24 C inlet: 24 + 700*0.06 = 66 C.
+  thermal_resistance_c_per_w: 0.06
+  thermal_time_constant_s: 20.0
+  thermal_slowdown_c: 84.0       # software slowdown threshold
+  thermal_hw_slowdown_c: 90.0    # hardware slowdown threshold
+  thermal_hysteresis_c: 3.0      # release throttle only once this far below
+  thermal_derate_per_c: 0.020    # clock factor lost per degree above threshold
+
+  # Compute. `seconds_per_cell_update` is the cost of advancing one mesh cell by
+  # one outer timestep at base clock and full occupancy, inclusive of all inner
+  # linear-solver iterations. Chosen so a 600^3 mesh on 128 GPUs runs at roughly
+  # 0.15 s/timestep, which is the right order for an implicit unsteady solver.
+  seconds_per_cell_update: 8.87e-8
+  occupancy_half_cells: 250000.0   # subdomain size at which SM occupancy reaches 50%
+  kernel_launch_overhead_s: 5.0e-6
+  kernels_per_inner_iteration: 15
+  memory_bandwidth_gbps: 3350.0    # HBM3
+
+# --- Interconnect ---------------------------------------------------------
+# Bandwidths are in Gbit/s throughout so NIC and switch counters are directly
+# comparable. Latency is one-way, in microseconds.
+interconnect:
+  intranode:
+    bandwidth_gbps: 2400.0       # ~300 GB/s NVLink-class
+    latency_us: 2.0
+    ber: 1.0e-15
+
+  nic:                            # node <-> leaf downlink
+    bandwidth_gbps: 200.0
+    latency_us: 5.0
+    ber: 1.0e-13
+
+  leaf_uplink:                    # leaf <-> spine
+    bandwidth_gbps: 200.0
+    latency_us: 12.0
+    # 8 x 200 = 1600 Gbps up, matching 4 nodes x 2 NICs x 200 = 1600 Gbps down.
+    # A non-blocking leaf, so in health the host NIC is the bottleneck and the
+    # uplink bundle runs at about half capacity. That headroom matters: it is
+    # what makes `congested` and the queue-depth counters mean something when
+    # they do move, instead of being pinned high in the baseline.
+    count_per_leaf: 8
+    ber: 1.0e-13
+
+  # Queueing. Mean queue length uses the M/M/1 form rho^2/(1-rho); once it
+  # exceeds the buffer, the excess is dropped and retransmitted, which costs
+  # goodput. Drops are therefore a *consequence* of load, never an input.
+  buffer_packets: 2000          # ~8 MB per port
+  packet_bytes: 4096
+  max_utilisation: 0.995
+  retransmit_penalty: 3.0         # goodput lost per unit of loss rate
+
+  spine_count: 2
+
+# --- Cooling --------------------------------------------------------------
+# Cold-aisle inlet temperature is a *rack* property, so degrading one CRAC moves
+# all 32 GPUs in that rack together.
+#   inlet = base + (1/efficiency - 1) * rack_power_kw * coupling
+cooling:
+  base_inlet_temp_c: 24.0
+  coupling_c_per_kw: 0.90
+  nominal_efficiency: 1.0
+
+# --- Storage --------------------------------------------------------------
+# One shared parallel filesystem behind every node. Latency follows the M/M/1
+# form base/(1-rho), so concurrent checkpoint writes from 16 nodes degrade each
+# other super-linearly -- which is why checkpointing is a legitimate phase that
+# nonetheless produces dramatic telemetry.
+storage:
+  capacity_gbps: 800.0
+  base_read_latency_ms: 0.8
+  base_write_latency_ms: 1.2
+  max_utilisation: 0.98
+  dirty_drain_gbps: 120.0        # background writeback after a dump completes
+
+# --- Host -----------------------------------------------------------------
+host:
+  cpu_cores: 96
+  memory_gb: 2048.0
+  idle_power_w: 400.0
+
+# --- Telemetry ------------------------------------------------------------
+telemetry:
+  # Deliberately coarse and independent of event resolution. Real fleets poll
+  # DCGM at about 1 Hz, so stalls shorter than this are genuinely invisible --
+  # a limitation of the model *and* of real monitoring.
+  sample_interval_s: 1.0
+  straggler_rel_threshold: 0.05   # rank is a straggler if >5% slower than the median

@@ -1,0 +1,367 @@
+# GPU Cluster Simulator
+
+A seeded, reproducible simulator of distributed GPU workload performance and reliability. A
+bulk-synchronous CFD job runs on a simulated 128-GPU cluster; the simulator models how workload
+behaviour, cluster topology, resource contention and infrastructure faults combine to produce
+observable telemetry.
+
+**The governing rule:** every telemetry value is *derived from simulated physical state*. No field
+is ever written by a scenario. Fault injectors perturb physical state only — link bandwidth,
+cooling efficiency, achievable SM throughput, memory bandwidth — and telemetry is an observation of
+the consequences. This is enforced structurally (`faults.py` has no import path to any
+telemetry-producing module) and asserted by a test.
+
+---
+
+## Quick start
+
+```bash
+python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
+python -m pytest -q               # 91 tests, ~50 s
+
+python scripts/run_all.py --seed 42
+```
+
+`run_all.py` simulates all 6 scenarios on all 3 meshes (18 runs, ~30 s total), writes one Parquet
+directory per run under `runs/`, prints the comparison tables, and renders
+**`dashboard/index.html`** — a single self-contained file with no external dependencies. Open it by
+double-clicking.
+
+Individual pieces:
+
+```bash
+python -m gcsim list                                          # scenarios and meshes
+python -m gcsim run --scenario thermal --mesh medium --stragglers
+python -m gcsim mesh-study                                    # the partitioning study
+python -m gcsim matrix --seed 7                               # the full matrix at another seed
+python -m gcsim dashboard                                     # rebuild the HTML from runs/
+```
+
+---
+
+## The model
+
+### Cluster
+
+4 racks × 4 nodes × 8 GPUs = **128 GPUs, one rank per GPU**. Two-tier fabric, one leaf switch per
+rack.
+
+| Link class | Where | Bandwidth | Latency |
+|---|---|---|---|
+| intra-node | GPU↔GPU, NVLink-class | 2400 Gbps | 2 µs |
+| NIC | node↔leaf, 2 per node | 200 Gbps | 5 µs |
+| leaf uplink | leaf↔spine, 8 per leaf | 200 Gbps | 12 µs |
+
+The uplink bundle matches the downlink capacity, so the leaf is **non-blocking** and the host NIC
+is the intended bottleneck. That leaves the uplink path real headroom in health — without it,
+`congested` and the queue counters would be pinned high in the baseline and would mean nothing when
+a fault arrived.
+
+A rack is simultaneously a **network domain** (one leaf) and a **thermal domain** (one CRAC,
+shared cold-aisle inlet). That co-location is why rack-scoped faults appear as a *contiguous block*
+of 32 ranks rather than a scatter.
+
+**Routing** determines both cost and which counters move:
+
+| Pair | Path | Switch hops |
+|---|---|---|
+| same node | GPU → GPU | 0 |
+| same rack | NIC → leaf → NIC | 1 |
+| cross rack | NIC → leaf → spine → leaf → NIC | 3 |
+
+`latency = Σ hop latency`; `effective_bw = min(hop bandwidth)` — the bottleneck, not the mean.
+
+### Workload
+
+Deliberately **not a physics model**. One outer timestep is:
+
+```
+HALO_EXCHANGE  →  COMPUTE  →  ALLREDUCE  →  [OUTPUT every 100 steps]
+```
+
+preceded by a one-off `DATA_LOAD`. 1000 timesteps. The CFD framing exists to motivate domain
+decomposition, which is the actual subject.
+
+The barrier relationship holds by construction:
+
+```
+iteration_time = max(rank arrival times) + collective + output
+wait[r]        = max(arrival) − arrival[r]
+```
+
+`wait` is the load-bearing quantity in the whole simulator. A slow rank has `wait ≈ 0` while its
+127 peers accumulate wait — **the culprit looks busy and every victim looks idle.** The four phase
+columns sum exactly to the timestep for every rank, every step; a test asserts it.
+
+### Mesh partitioning — the centrepiece
+
+A uniform Cartesian box is decomposed onto a 3D process grid, chosen by minimising subdomain
+surface area: **8 × 4 × 4** for 128 ranks. With x-fastest rank ordering and packed placement this
+puts ±x on NVLink, ±y inside the rack, and ±z across racks — so the *largest* halo faces ride the
+*fastest* link and only the two smallest ever cross a spine.
+
+Three uniform meshes, same cluster, no fault anywhere:
+
+| Mesh | Dims | Cells/rank | Imbalance | SM occupancy | Parallel efficiency |
+|---|---|---|---|---|---|
+| coarse | 250³ | 122,070 | **1.0404** | 29.6% | 27.7% |
+| medium | 600³ | 1,687,500 | 1.0000 | 79.1% | 78.0% |
+| fine | 1000³ | 7,812,500 | 1.0000 | 89.9% | 89.5% |
+
+Two independent effects, both derived rather than tuned:
+
+- **Compute scales with volume, communication with surface area.** Refining the mesh raises
+  cells-per-rank faster than halo-face cells, so the compute-to-communication ratio improves.
+- **Small subdomains cannot fill the device.** Achieved occupancy follows
+  `cells / (cells + occupancy_half_cells)`, so a rank holding 122k cells reaches about a third of
+  peak throughput.
+
+`coarse` is chosen so 250 divides *neither* grid extent. The resulting 4% per-rank cell-count
+spread is **real load imbalance on perfectly healthy hardware** — the control case for every
+straggler scenario.
+
+Note what utilisation does across that table: **flat at ~99.9%** while occupancy runs 30% → 90%.
+A fleet dashboard showing only utilisation would report the coarse mesh as fully busy while it
+wasted two-thirds of the hardware.
+
+### The causal loop
+
+Everything else in the simulator is a one-way function. This is the only place an output feeds back
+into an input:
+
+```
+work → occupancy → power → temperature → throttle → clock
+          ↑                                           │
+          └───────────────────────────────────────────┘
+                (applies to the NEXT interval)
+```
+
+- `P = P_idle·leakage + (P_max − P_idle)·occupancy·(f/f_base)^2.2`
+- `dT/dt = (P·R_th − (T − T_inlet)) / τ`, with `T_inlet` a **rack** property
+- `T > 84 °C` (with hysteresis) → clock steps down → compute slows → peers' wait rises
+
+The one-interval lag is why the thermal scenario produces a *ramp* and a clock *staircase* rather
+than a step. The loop is self-limiting: throttled GPUs draw less power, which lowers their own rack
+inlet.
+
+**Power follows occupancy, not utilisation.** A rank spinning on a barrier keeps a kernel resident,
+so `utilization_pct` stays pinned near 100 while occupancy, power and temperature fall. That
+divergence between two channels most models treat as one number is the clearest fingerprint of a
+synchronisation stall, and it only exists because the two are computed from different quantities.
+
+---
+
+## Scenarios
+
+| Id | Fault? | Physical perturbation |
+|---|---|---|
+| `healthy` | no | — |
+| `straggler` | **yes** (rank) | one GPU loses 25% of its SM throughput to a co-resident process |
+| `network_domain` | **yes** (rack) | rack 2's uplink bundle fails to 1 of 8; the survivor carries a 2% frame error rate |
+| `thermal` | **yes** (rack) | rack 1 cooling degrades to 30% over 60 timesteps |
+| `gpu_degradation` | **yes** (GPU) | one GPU loses 15% memory bandwidth; RAS caps its clock at 90% |
+| `phase_change` | **no** | at step 500 the job switches to a full-field output campaign: every 20 steps, 4× the data |
+
+### Signature matrix (medium mesh)
+
+| Channel | healthy | straggler | network_domain | thermal | gpu_degradation | phase_change |
+|---|---|---|---|---|---|---|
+| Timestep duration | — | ▲ | ▲ | ▲ | ▲ | ▲ |
+| **Rank spread** | — | ▲ | ▲ | ▲ | ▲ | **—** |
+| **Compute time** | — | — | **—** | — | — | — |
+| **Halo time** | — | — | **▲** | — | — | — |
+| GPU utilisation | — | — | — | — | — | — |
+| SM occupancy | — | ▼ | ▼ | ▼ | ▼ | ▼ |
+| Board power | — | ▼ | ▼ | ▼ | ▼ | ▼ |
+| **Rack thermal drift** | — | — | — | **▲** | — | — |
+| **Throttle reason** | none | **none** | **none** | **THERMAL** | **RELIABILITY** | **none** |
+| **Uplink down / errors** | — | — | **▲** | — | — | — |
+| **Storage write latency** | — | — | — | — | — | **▲** |
+| Node io pressure | — | — | — | — | — | ▲ |
+
+**The discriminating rows mostly work by staying still.** Every scenario except `healthy` slows the
+job, so the top row separates nothing. What separates them is the pattern of what did *not* move:
+
+- `phase_change` is the only slowdown with a **tight rank spread** and clean device counters. It
+  costs ~10% throughput — enough to trip any threshold detector — and no hardware channel moves.
+- `network_domain` is the only one where **compute time is untouched**: the loss is on the wire.
+- `straggler` and `gpu_degradation` are the hard pair. They differ by 0.3 percentage points in
+  throughput and 1% in rank spread — indistinguishable on timing. The **only** separator is
+  `throttle_reason = RELIABILITY`, because a degraded device reports its own condition while a
+  stolen-SM straggler leaves no fingerprint on any counter at all.
+
+### Fault severity depends on the workload
+
+The same cooling failure produces three different outcomes:
+
+| Mesh | Rack power | Peak temp | Throttled | Throughput cost |
+|---|---|---|---|---|
+| coarse | ~9.9 kW | 55 °C | none | +0.6% |
+| medium | ~19.6 kW | 89 °C | 32 GPUs | +8.9% |
+| fine | ~21 kW | 91 °C | 32 GPUs | +13.8% |
+
+A communication-bound coarse-mesh job draws far less power, so the same failure never reaches the
+slowdown threshold. It is still a failed CRAC — the rack has drifted 14 °C from its peers — and the
+classifier catches it on that drift rather than waiting for a throttle bit.
+
+---
+
+## Reproducibility
+
+One master seed. Every stochastic stream is keyed by the entity's **stable identity**
+(`"gpu:r1n2g5"`), never its index, via `numpy.random.SeedSequence`. Consequences:
+
+- The same seed reproduces byte-identical output across all nine tables.
+- Adding a scenario, adding a rack or reordering a loop cannot perturb an unrelated GPU's stream.
+- A healthy run and a faulted run are **directly diffable**: they agree exactly up to the injection
+  timestep, so every later difference is a consequence of the fault rather than a different roll.
+
+There is exactly one stochastic input in the model — fixed per-GPU manufacturing variation (clock
+headroom, leakage) plus a small per-timestep efficiency jitter. Everything else is deterministic
+given that and the workload.
+
+To check by hand:
+
+```bash
+python scripts/run_all.py --seed 42 && cp -r runs runs_a
+python scripts/run_all.py --seed 42 && diff -r runs runs_a
+# -> 180 files byte-identical
+```
+
+Wall-clock timing is deliberately **not** written to `summary.json`. It measures the machine that
+ran the simulation rather than the simulation itself, and persisting it would make two identical
+runs differ on disk for the sake of a number the CLI can simply print.
+
+---
+
+## Layout
+
+```
+configs/            cluster.yaml, meshes.yaml, workload.yaml, scenarios.yaml
+src/gcsim/
+  config.py         typed config + the seed-derivation scheme
+  topology.py       racks/nodes/GPUs/NICs/switches/ports/channels
+  routing.py        route(src, dst) -> path; latency = sum, bandwidth = min
+  mesh.py           process grid, block partition, halo geometry, imbalance
+  placement.py      rank -> GPU (packed | scatter)
+  workload.py       phases and mutable workload state
+  models/           compute, power, thermal, network, storage
+  faults.py         injectors -- PHYSICAL STATE ONLY, no telemetry imports
+  engine/           event queue, trace, main loop
+  samplers.py       the six telemetry samplers, on their own 1 Hz clock
+  telemetry.py      schemas, invariant declarations, Parquet I/O
+  metrics.py        attribution + the rule-based diagnosis
+  dashboard/        payload builder + the self-contained HTML template
+scripts/run_all.py  the whole study, end to end
+tests/              91 tests
+```
+
+`TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
+
+---
+
+## Tests
+
+```bash
+python -m pytest -q
+```
+
+Beyond the usual unit coverage, the tests that carry the argument:
+
+- **`test_faults_cannot_reach_telemetry`** walks the import graph and asserts `faults.py` has no
+  path to `telemetry`, `samplers` or `metrics`. If it fails, a scenario has gained the ability to
+  write its own signature and nothing the simulator produces means anything.
+- **Counter conservation** — bytes on a leaf's uplink ports equal the halo traffic whose route
+  genuinely left that rack, recomputed from the flow table rather than read back from the same
+  accounting path. This is the difference between switch telemetry *derived from routed flows* and
+  switch telemetry invented alongside them.
+- **Phase-sum exactness** — the four phase columns sum to the timestep for all 128 ranks × 1000
+  steps, so `wait` is genuinely barrier slack and not a free parameter.
+- **Barrier-stall fingerprint** — peers of a straggler show high utilisation with *falling*
+  occupancy and power, and the culprit is the one GPU that runs *hotter*.
+- **Straggler amplification** — the job grows by the victim's excess over the *previous pacer*, not
+  by its own slowdown. Getting this wrong overstates the cost of every straggler.
+- **Degradation vs straggler** — asserts they are indistinguishable on timing and separable only on
+  `throttle_reason` and occupancy.
+- **`phase_change` is not a fault** — throughput drops while `throttled` is never set, link errors
+  stay at the noise floor, and rank spread stays tight.
+
+---
+
+## Assumptions
+
+- **One rank per GPU**, single tenant. No other job competes for the cluster.
+- The domain is **triply periodic**, so every rank has exactly six neighbours and none is privileged
+  by sitting on a wall. Any imbalance therefore comes from partitioning alone.
+- `seconds_per_cell_update` represents a full outer timestep *inclusive of all 20 inner
+  linear-solver iterations*. The halo is exchanged once per inner iteration, which is what makes
+  communication matter at all for an implicit solver.
+- Storage traffic uses a **separate storage fabric** and does not contend with halo traffic.
+- The job is at **thermal equilibrium** when observed; the cold-start transient is not modelled.
+- Constants are plausible order-of-magnitude values for an H100-SXM-class node. They are **not
+  calibrated** against real telemetry — see below.
+
+## Known limitations
+
+- **Flow-level analytic network model**, not packet-level simulation. Contention is a two-pass
+  max-min-fair approximation rather than an exact fixed point, and the uplink bundle is aggregated
+  into one channel (per-port telemetry is recovered by spreading traffic across live members, which
+  is what ECMP does in aggregate).
+- **Collectives use a closed-form tree/ring cost**, not a real NCCL algorithm-selection tree.
+- **Thermal model is a first-order RC per GPU** with no rack airflow recirculation and no
+  hot-aisle coupling between racks.
+- **No failure/restart path.** Nothing crashes, no checkpoint is ever recovered from, and there is
+  no job requeue.
+- **Sampled telemetry inherits real-fleet coarseness.** At a 1 s interval against a ~190 ms
+  timestep, a sampler averages over several timesteps and cannot resolve the phase structure inside
+  them. Sub-interval stalls are genuinely invisible — a limitation of the model *and* of real
+  monitoring.
+- **Queue depth and utilisation are reported on different bases** (burst high-water mark vs window
+  average). They look inconsistent on purpose: a bulk-synchronous job moves its entire halo in a
+  burst occupying a few percent of the sample window, so a link can average 4% and still queue
+  hard. Averaging the queue away would hide exactly that.
+- **Congestion never causes drops in the halo exchange**, because a closed-loop application-paced
+  workload cannot overload a link — the flows simply take longer. Drops here come from physical
+  frame errors. That is correct for this workload but would not hold for an open-loop one.
+- The **diagnosis is a small rule set**, not a detector anyone should deploy. It exists to make the
+  discriminating channels explicit and checkable, and it is scored against ground truth on the
+  dashboard (18/18 on the current matrix).
+
+## Calibration
+
+None of the constants are fitted. How each *would* be, from real fleet telemetry:
+
+| Constant | Fit from |
+|---|---|
+| `seconds_per_cell_update` | per-timestep wall time vs cells-per-rank across job sizes |
+| `occupancy_half_cells` | DCGM `PROF_SM_OCCUPANCY` vs subdomain size on a strong-scaling sweep |
+| `kernel_launch_overhead_s` | the intercept of that same sweep as subdomain size → 0 |
+| link bandwidths, latencies | point-to-point and collective microbenchmarks (osu, nccl-tests) |
+| `R_th`, `τ` | thermal step response — start a job on an idle rack and fit the exponential |
+| `coupling_c_per_kw` | inlet temperature vs rack power across the fleet, or a CRAC derate test |
+| power model exponent | board power vs clock at fixed occupancy, from DCGM power + clock |
+| storage `ρ`, base latency | filesystem queue-depth and latency counters during checkpoint bursts |
+
+The straggler model would be validated against measured `wait_ms` distributions: the claim that a
+slow rank shows near-zero wait while its peers accumulate it is directly checkable in any real
+profile, and the amplification relationship (job cost = victim's excess over the *previous* pacer)
+is a falsifiable prediction.
+
+## Extending it
+
+- **A new scenario** is a YAML block plus one function in `faults.py` decorated with
+  `@handler("name")`. Nothing in the engine changes.
+- **A new mesh** is a block in `meshes.yaml`.
+- **A different cluster shape** is `cluster.yaml`; the process grid, placement and routing all
+  follow from it.
+- **A new telemetry channel** means a field in `SCHEMAS`, a line in the relevant sampler, and — if
+  it is a counter or a bounded gauge — an entry in `CUMULATIVE_COLUMNS` or `BOUNDED_COLUMNS`, which
+  makes the invariant tests cover it automatically.
+
+## Prior art
+
+The placement/proximity and communication-latency modelling is informed by *Dally: a
+network-placement sensitive cluster scheduler for deep learning* (Sharma et al., Penn State,
+arXiv:2401.16492), which makes the same core argument — that job placement relative to network
+topology dominates communication cost — and describes `ArtISt-sim`, a data-driven DDL cluster
+simulator built for the same reason this one was.

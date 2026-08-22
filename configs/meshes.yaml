@@ -1,0 +1,60 @@
+# Uniform Cartesian meshes for the mesh-partitioning study.
+#
+# All three are the SAME problem at three resolutions on the SAME 128-GPU
+# cluster. Compute scales with subdomain volume, communication with subdomain
+# surface area, so resolution alone controls the compute:communication ratio and
+# therefore achieved GPU utilisation. Nothing else differs.
+#
+# The process grid for 128 ranks is chosen by minimising total subdomain surface
+# area, which gives 8 x 4 x 4 (see mesh.choose_process_grid).
+#
+#   mesh    dims      cells     cells/rank   250/8 = 31.25  250/4 = 62.5
+#   coarse  250^3     15.6 M      122 k      ragged on ALL THREE axes
+#   medium  600^3    216.0 M     1.69 M      600/8 = 75, 600/4 = 150 -> exact
+#   fine   1000^3   1000.0 M     7.81 M      1000/8 = 125, 1000/4 = 250 -> exact
+#
+# `coarse` is deliberately chosen so its dimensions divide neither grid extent.
+# The resulting per-rank cell-count spread is intrinsic load imbalance with no
+# hardware fault present anywhere -- the control case for the whole exercise.
+
+defaults: &solver_defaults
+  # Bytes of solver state held per cell (conserved variables, gradients,
+  # turbulence quantities, linear-solver workspace, Jacobian blocks).
+  bytes_per_cell: 2000.0
+
+  # Halo exchange: `halo_fields` values, `halo_depth` cells deep, float64,
+  # exchanged once per inner linear-solver iteration.
+  halo_fields: 5
+  halo_depth: 2
+  bytes_per_value: 8.0
+
+  # Inner iterations of the implicit solve per outer timestep. This is what
+  # makes communication matter: the halo is exchanged 20x per timestep, not once.
+  inner_iterations: 20
+
+  # Bytes written per cell when a field output is produced.
+  output_bytes_per_cell: 40.0
+
+  # Bytes read per cell during the one-off mesh load / decomposition phase.
+  dataload_bytes_per_cell: 200.0
+
+meshes:
+  coarse:
+    <<: *solver_defaults
+    dims: [250, 250, 250]
+    label: "Coarse (250^3, 15.6 M cells)"
+    note: "Ragged partition on all three axes; subdomains too small to fill the SMs."
+
+  medium:
+    <<: *solver_defaults
+    dims: [600, 600, 600]
+    label: "Medium (600^3, 216 M cells)"
+    note: "Exact partition; balanced compute:communication ratio. Reference case."
+
+  fine:
+    <<: *solver_defaults
+    dims: [1000, 1000, 1000]
+    label: "Fine (1000^3, 1.0 B cells)"
+    note: "Exact partition; compute-bound, high occupancy, expensive field output."
+
+default_mesh: medium

@@ -1,0 +1,451 @@
+"""Turn `runs/` into one self-contained HTML file.
+
+Design notes
+------------
+The page carries no external dependency -- no CDN, no charting library, no
+server. Charts are hand-drawn SVG driven entirely by CSS custom properties, so
+light and dark are the same code path and the whole file is a few hundred kB
+instead of the 5 MB a bundled charting library would cost.
+
+Everything is decimated before it is embedded. Full-resolution Parquet stays on
+disk for real analysis; the page only needs enough resolution to make each
+signature legible:
+
+    job series      all 1000 timesteps (only a handful of numbers per step)
+    rank heatmaps   128 ranks x 96 time bins
+    telemetry       96 time bins, aggregated per rack
+
+Values are rounded hard on the way out. A temperature travels as tenths of a
+degree in an integer, not a float64 -- across 18 runs that is the difference
+between a 3 MB page and a 12 MB one.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from gcsim.config import load_config
+from gcsim.mesh import partition
+from gcsim.metrics import (counter_conservation, mesh_scaling_table,
+                           straggler_attribution)
+from gcsim.telemetry import read_run
+
+TIME_BINS = 96
+TEMPLATE = Path(__file__).parent / "template.html"
+DEFAULT_OUT = Path(__file__).resolve().parents[3] / "dashboard" / "index.html"
+
+#: Fraction of a run treated as "before" / "after" when deriving the signature
+#: matrix. Matches metrics.diagnose, so the table and the verdict never disagree.
+HEAD, TAIL = 0.15, 0.30
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _r(values, places: int = 3):
+    """Round for transport. `places=0` yields ints."""
+    arr = np.asarray(values, dtype=np.float64).ravel()
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    if places == 0:
+        return [int(v) for v in np.rint(arr)]
+    return [round(float(v), places) for v in arr]
+
+
+def _bin_series(t: np.ndarray, v: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    """Mean of `v` in each time bin, filling empty bins from their neighbours.
+
+    An empty bin means the sampler produced nothing in that window, which reads
+    as "unchanged" -- not as a drop to zero. Leading empties are back-filled from
+    the first real sample rather than carried forward from nothing: seeding the
+    carry at zero puts a 0 degree C, 0% occupancy column at the start of every
+    short run, which is not a measurement and badly distorts any colour scale
+    derived from the data range.
+    """
+    idx = np.clip(np.searchsorted(edges, t, side="right") - 1, 0, len(edges) - 2)
+    total = np.bincount(idx, weights=v, minlength=len(edges) - 1)
+    count = np.bincount(idx, minlength=len(edges) - 1)
+    out = np.divide(total, np.maximum(count, 1))
+
+    filled = np.nonzero(count > 0)[0]
+    if filled.size == 0:
+        return out
+    empty = count == 0
+    if empty.any():
+        last = out[filled[0]]                 # back-fill, never zero
+        for i in range(len(out)):
+            if empty[i]:
+                out[i] = last
+            else:
+                last = out[i]
+    return out
+
+
+def _edges(runtime: float, n_bins: int = TIME_BINS) -> np.ndarray:
+    return np.linspace(0.0, max(runtime, 1e-6), n_bins + 1)
+
+
+def _bin_count(n_samples: int) -> int:
+    """How many time bins this run can actually support.
+
+    Never more than there are samples. A 39 s run sampled at 1 Hz has 39 real
+    observations; spreading them over 96 bins would fill three-fifths of the
+    columns with duplicated neighbours and invent blocky structure that is an
+    artefact of the binning, not of the simulation.
+    """
+    return int(max(8, min(TIME_BINS, n_samples)))
+
+
+def _window(values: np.ndarray) -> tuple[float, float]:
+    n = len(values)
+    if n < 6:
+        m = float(np.mean(values))
+        return m, m
+    head = values[: max(1, int(n * HEAD))]
+    tail = values[int(n * (1.0 - TAIL)):]
+    return float(np.mean(head)), float(np.mean(tail))
+
+
+def _direction(before: float, after: float, rel: float = 0.05, floor: float = 0.0) -> str:
+    if abs(after - before) <= max(abs(before) * rel, floor):
+        return "flat"
+    return "up" if after > before else "down"
+
+
+# ---------------------------------------------------------------------------
+# per-run extraction
+# ---------------------------------------------------------------------------
+
+def _job_block(job: pd.DataFrame) -> dict[str, Any]:
+    """Phase decomposition per timestep, in milliseconds.
+
+    `wait_ms` is what the mean rank spent blocked at the barrier: the timestep
+    minus its own work. Stacked with the other four it accounts for the whole
+    timestep, so the stack height IS the timestep and nothing is hidden.
+    """
+    wait = (job["iteration_time_s"] - job["compute_mean_s"] - job["halo_mean_s"]
+            - job["allreduce_s"] - job["checkpoint_s"]).clip(lower=0)
+    return {
+        "iteration": [int(v) for v in job["iteration"]],
+        "t": _r(job["timestamp"], 2),
+        "iter_ms": _r(job["iteration_time_s"] * 1e3, 2),
+        "compute_ms": _r(job["compute_mean_s"] * 1e3, 2),
+        "halo_ms": _r(job["halo_mean_s"] * 1e3, 2),
+        "allreduce_ms": _r(job["allreduce_s"] * 1e3, 3),
+        "output_ms": _r(job["checkpoint_s"] * 1e3, 2),
+        "wait_ms": _r(wait * 1e3, 2),
+        "spread_ms": _r(job["rank_spread_s"] * 1e3, 2),
+    }
+
+
+def _rank_block(rank: pd.DataFrame, gpu: pd.DataFrame, runtime: float,
+                n_ranks: int, n_bins: int) -> dict[str, Any]:
+    """Rank x time heatmaps.
+
+    Three channels, chosen because between them they separate every scenario:
+    barrier wait (who is waiting for whom), occupancy (who is actually doing
+    work), and temperature (which physical region is affected).
+    """
+    edges = _edges(runtime, n_bins)
+    centres = (edges[:-1] + edges[1:]) / 2.0
+
+    #  Wait comes from rank_performance, which is indexed by timestep. Map it
+    #  onto the same wall-clock bins as the telemetry.
+    iters = rank["iteration"].to_numpy()
+    n_iters = int(iters.max())
+    bins = np.clip(((iters - 1) / n_iters * n_bins).astype(int), 0, n_bins - 1)
+    ranks = rank["rank_id"].to_numpy()
+    wait = np.zeros((n_ranks, n_bins))
+    count = np.zeros((n_ranks, n_bins))
+    np.add.at(wait, (ranks, bins), rank["allreduce_wait_s"].to_numpy() * 1e3)
+    np.add.at(count, (ranks, bins), 1.0)
+    wait /= np.maximum(count, 1.0)
+
+    #  Occupancy and temperature come from GPU telemetry, already on wall time.
+    gpu_ids = sorted(gpu["gpu_id"].unique())
+    order = {g: i for i, g in enumerate(gpu_ids)}
+    occ = np.zeros((n_ranks, n_bins))
+    temp = np.zeros((n_ranks, n_bins))
+    for gid, grp in gpu.groupby("gpu_id"):
+        i = order[gid]
+        t = grp["timestamp"].to_numpy()
+        occ[i] = _bin_series(t, grp["sm_occupancy_pct"].to_numpy(), edges)
+        temp[i] = _bin_series(t, grp["temperature_c"].to_numpy(), edges)
+
+    busy = rank["compute_time_s"] + rank["halo_wait_s"]
+    late = rank["iteration"] > n_iters * (1.0 - TAIL)
+    by_rank = busy[late].groupby(rank.loc[late, "rank_id"]).mean()
+    wait_by_rank = rank.loc[late].groupby("rank_id")["allreduce_wait_s"].mean()
+
+    return {
+        "t": _r(centres, 1),
+        "gpu_ids": gpu_ids,
+        #  Tenths of a unit as integers: same information, a third of the bytes.
+        "wait": [_r(row, 0) for row in wait],
+        "occupancy": [_r(row * 10, 0) for row in occ],
+        "temperature": [_r(row * 10, 0) for row in temp],
+        "mean_busy_ms": _r(by_rank.reindex(range(n_ranks)).fillna(0.0) * 1e3, 2),
+        "mean_wait_ms": _r(wait_by_rank.reindex(range(n_ranks)).fillna(0.0) * 1e3, 2),
+    }
+
+
+def _telemetry_block(frames: dict[str, pd.DataFrame], runtime: float,
+                     n_bins: int) -> dict[str, Any]:
+    gpu = frames["telemetry_gpu"]
+    edges = _edges(runtime, n_bins)
+    centres = (edges[:-1] + edges[1:]) / 2.0
+
+    racks = sorted(gpu["rack_id"].unique())
+    temperature, clock, power = {}, {}, {}
+    for rack, grp in gpu.groupby("rack_id"):
+        agg = grp.groupby("timestamp")[["temperature_c", "clock_mhz", "power_w"]].mean()
+        t = agg.index.to_numpy()
+        temperature[rack] = _r(_bin_series(t, agg["temperature_c"].to_numpy(), edges), 2)
+        clock[rack] = _r(_bin_series(t, agg["clock_mhz"].to_numpy(), edges), 1)
+        power[rack] = _r(_bin_series(t, agg["power_w"].to_numpy(), edges), 1)
+
+    fleet = gpu.groupby("timestamp")[["utilization_pct", "sm_occupancy_pct"]].mean()
+    ft = fleet.index.to_numpy()
+    throttled = gpu.groupby("timestamp")["throttled"].sum()
+
+    storage = frames["telemetry_storage"].sort_values("timestamp")
+    st = storage["timestamp"].to_numpy()
+    node = frames["telemetry_node"].groupby("timestamp")[
+        ["cpu_pressure", "memory_pressure", "io_pressure"]].mean()
+    nt = node.index.to_numpy()
+
+    return {
+        "t": _r(centres, 1),
+        "racks": racks,
+        "rack_temperature": temperature,
+        "rack_clock": clock,
+        "rack_power": power,
+        "utilisation": _r(_bin_series(ft, fleet["utilization_pct"].to_numpy(), edges), 2),
+        "occupancy": _r(_bin_series(ft, fleet["sm_occupancy_pct"].to_numpy(), edges), 2),
+        "throttled_gpus": _r(_bin_series(throttled.index.to_numpy(),
+                                         throttled.to_numpy().astype(float), edges), 0),
+        "storage_write_ms": _r(_bin_series(st, storage["write_latency_ms"].to_numpy(), edges), 3),
+        "storage_queue": _r(_bin_series(st, storage["queue_depth"].to_numpy(), edges), 2),
+        "storage_dirty_gb": _r(_bin_series(st, storage["dirty_backlog_gb"].to_numpy(), edges), 2),
+        "node_cpu": _r(_bin_series(nt, node["cpu_pressure"].to_numpy(), edges), 3),
+        "node_mem": _r(_bin_series(nt, node["memory_pressure"].to_numpy(), edges), 3),
+        "node_io": _r(_bin_series(nt, node["io_pressure"].to_numpy(), edges), 3),
+    }
+
+
+def _fabric_block(frames: dict[str, pd.DataFrame], runtime: float,
+                  n_bins: int) -> dict[str, Any]:
+    ports = frames["telemetry_switch_port"]
+    agg = frames["telemetry_switch_aggregate"]
+    edges = _edges(runtime, n_bins)
+    centres = (edges[:-1] + edges[1:]) / 2.0
+
+    leaves = sorted(agg.loc[agg["switch_tier"] == "leaf", "domain_id"].dropna().unique())
+    uplink_util, oversub = {}, {}
+    for domain, grp in agg[agg["switch_tier"] == "leaf"].groupby("domain_id"):
+        grp = grp.sort_values("timestamp")
+        t = grp["timestamp"].to_numpy()
+        uplink_util[domain] = _r(_bin_series(t, grp["uplink_utilisation_pct"].to_numpy(), edges), 2)
+        oversub[domain] = _r(_bin_series(t, grp["oversubscription_ratio"].to_numpy(), edges), 2)
+
+    up = ports[(ports["switch_tier"] == "leaf") & (ports["port_role"] == "uplink")]
+    drops, errors, active = {}, {}, {}
+    for domain, grp in up.groupby("domain_id"):
+        per_t = grp.groupby("timestamp").agg(
+            drops=("tx_drops", "sum"), errors=("tx_errors", "sum"),
+            active=("link_up", "sum"))
+        t = per_t.index.to_numpy()
+        drops[domain] = _r(_bin_series(t, per_t["drops"].to_numpy(), edges) / 1e6, 3)
+        errors[domain] = _r(_bin_series(t, per_t["errors"].to_numpy(), edges) / 1e6, 3)
+        active[domain] = _r(_bin_series(t, per_t["active"].to_numpy().astype(float), edges), 1)
+
+    return {
+        "t": _r(centres, 1),
+        "leaves": leaves,
+        "uplink_util": uplink_util,
+        "oversubscription": oversub,
+        "drops_m": drops,
+        "errors_m": errors,
+        "active_uplinks": active,
+        "conservation": counter_conservation(frames).round(3).to_dict("records"),
+    }
+
+
+def _signature_row(frames: dict[str, pd.DataFrame], job: pd.DataFrame) -> dict[str, str]:
+    """Derive one column of the signature matrix from telemetry alone.
+
+    Nothing here consults the ground-truth label, so a reader can check the
+    verdict against the evidence rather than taking it on trust.
+    """
+    gpu = frames["telemetry_gpu"]
+    ports = frames["telemetry_switch_port"]
+    storage = frames["telemetry_storage"].sort_values("timestamp")
+    node = frames["telemetry_node"].sort_values("timestamp")
+
+    def dirn(series, rel=0.05, floor=0.0):
+        return _direction(*_window(np.asarray(series, dtype=float)), rel, floor)
+
+    fleet = gpu.groupby("timestamp")[
+        ["utilization_pct", "sm_occupancy_pct", "power_w", "temperature_c"]].mean()
+
+    throttled = gpu[gpu["throttled"]]
+    reasons = sorted(set(throttled["throttle_reason"])) if len(throttled) else []
+    n_throttled = int(throttled["gpu_id"].nunique()) if len(throttled) else 0
+
+    up = ports[(ports["switch_tier"] == "leaf") & (ports["port_role"] == "uplink")]
+    err_total = up.groupby("timestamp")["tx_errors"].sum()
+    down = ports[~ports["link_up"]]
+
+    #  Which racks moved thermally, relative to the fleet? Inlet temperature is a
+    #  rack property, so a cooling failure shows as one rack drifting from the
+    #  rest -- visible here even when it never reaches the throttle threshold.
+    rack_t = gpu.pivot_table(index="timestamp", columns="rack_id",
+                             values="temperature_c", aggfunc="mean").sort_index()
+    drift = "flat"
+    hot_racks: list[str] = []
+    if len(rack_t) >= 6 and rack_t.shape[1] > 1:
+        head = rack_t.iloc[: max(1, int(len(rack_t) * HEAD))].mean()
+        tail = rack_t.iloc[int(len(rack_t) * (1.0 - TAIL)):].mean()
+        delta = (tail - head) - (tail - head).median()
+        hot_racks = sorted(delta[delta > 8.0].index.tolist())
+        drift = "up" if hot_racks else "flat"
+
+    spread_before, spread_after = _window(job["rank_spread_s"].to_numpy())
+
+    return {
+        "iteration_time": dirn(job["iteration_time_s"], 0.03),
+        "rank_spread": _direction(spread_before, spread_after, 1.0),
+        "compute": dirn(job["compute_mean_s"], 0.03),
+        "halo": dirn(job["halo_mean_s"], 0.10),
+        "utilisation": dirn(fleet["utilization_pct"], 0.01),
+        "occupancy": dirn(fleet["sm_occupancy_pct"], 0.03),
+        "power": dirn(fleet["power_w"], 0.03),
+        "rack_thermal_drift": drift,
+        "hot_racks": ",".join(hot_racks),
+        "throttled": "up" if reasons else "flat",
+        "throttle_reason": ",".join(reasons) if reasons else "NONE",
+        "throttled_gpus": str(n_throttled),
+        "link_errors": "up" if float(err_total.max()) > 1000 else "flat",
+        "link_down": "up" if len(down) else "flat",
+        "down_domains": ",".join(sorted(d for d in down["domain_id"].dropna().unique())),
+        "storage_latency": dirn(storage["write_latency_ms"], 0.30),
+        "node_io": dirn(node["io_pressure"], 0.10, 0.01),
+    }
+
+
+# ---------------------------------------------------------------------------
+# payload
+# ---------------------------------------------------------------------------
+
+def build_payload(runs_dir: Path | str) -> dict[str, Any]:
+    runs_dir = Path(runs_dir)
+    bundle = load_config()
+
+    run_dirs = sorted(p for p in runs_dir.iterdir()
+                      if p.is_dir() and (p / "summary.json").exists())
+    if not run_dirs:
+        raise FileNotFoundError(
+            f"no runs found under {runs_dir}; run scripts/run_all.py first")
+
+    runs: dict[str, Any] = {}
+    healthy_summaries: list[dict] = []
+    seeds: set[int] = set()
+
+    for d in run_dirs:
+        frames, summary = read_run(d)
+        key = f"{summary['scenario']}__{summary['mesh']}"
+        seeds.add(int(summary["seed"]))
+        job = frames["job_performance"].sort_values("iteration")
+        runtime = float(summary["runtime_s"])
+        n_ranks = int(summary["n_ranks"])
+        n_bins = _bin_count(frames["telemetry_gpu"]["timestamp"].nunique())
+
+        events = frames["events"]
+        marks = []
+        for _, row in events[events["event_type"] == "INJECTION_APPLIED"].iterrows():
+            body = json.loads(row["payload"])
+            marks.append({"t": round(float(row["timestamp"]), 2),
+                          "iteration": int(body.get("iteration", 0)),
+                          "label": body.get("type", "injection")})
+
+        runs[key] = {
+            "summary": summary,
+            "job": _job_block(job),
+            "marks": marks,
+            "ranks": _rank_block(frames["rank_performance"], frames["telemetry_gpu"],
+                                 runtime, n_ranks, n_bins),
+            "telemetry": _telemetry_block(frames, runtime, n_bins),
+            "fabric": _fabric_block(frames, runtime, n_bins),
+            "signature": _signature_row(frames, job),
+            "attribution": straggler_attribution(
+                frames["rank_performance"], top_n=6).round(5).to_dict("records"),
+        }
+        if summary["scenario"] == "healthy":
+            healthy_summaries.append(summary)
+
+    #  Partition geometry, so the process-grid map can show raggedness directly
+    #  rather than asserting it in prose.
+    partitions = {}
+    for name, mesh in bundle.meshes.items():
+        d = partition(mesh, bundle.cluster.n_gpus,
+                      preferred_first_extent=bundle.cluster.gpus_per_node)
+        partitions[name] = {
+            "grid": list(d.grid),
+            "dims": list(mesh.dims),
+            "cells": [int(c) for c in d.cells],
+            "coords": [[int(v) for v in row] for row in d.coords],
+            "imbalance": round(d.imbalance, 5),
+            "surface_to_volume": round(d.surface_to_volume, 5),
+            "label": mesh.label,
+            "note": mesh.note,
+        }
+
+    cc = bundle.cluster
+    return {
+        "meta": {
+            "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "seeds": sorted(seeds),
+            "cluster": f"{cc.racks} racks x {cc.nodes_per_rack} nodes x "
+                       f"{cc.gpus_per_node} GPUs = {cc.n_gpus} ranks",
+            "gpu_model": cc.gpu.model,
+            "workload": f"{bundle.workload.iterations} timesteps, field output every "
+                        f"{bundle.workload.output_interval}",
+            "sample_interval_s": cc.telemetry.sample_interval_s,
+            "slowdown_c": cc.gpu.thermal_slowdown_c,
+            "n_ranks": cc.n_gpus,
+            "gpus_per_node": cc.gpus_per_node,
+            "gpus_per_rack": cc.gpus_per_rack,
+            "racks": cc.racks,
+        },
+        "meshes": [m for m in ("coarse", "medium", "fine") if m in bundle.meshes],
+        "default_mesh": bundle.default_mesh,
+        "scenarios": [
+            {"name": s.name, "label": s.label, "fault": s.fault,
+             "tier": s.tier, "description": s.description}
+            for s in (bundle.scenarios[n] for n in bundle.scenario_order)
+        ],
+        "mesh_study": (mesh_scaling_table(healthy_summaries).round(5).to_dict("records")
+                       if healthy_summaries else []),
+        "partitions": partitions,
+        "runs": runs,
+    }
+
+
+def build_dashboard(runs_dir: Path | str, out_path: Path | str | None = None) -> Path:
+    payload = build_payload(runs_dir)
+    out = Path(out_path) if out_path else DEFAULT_OUT
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    html = TEMPLATE.read_text(encoding="utf-8")
+    blob = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+    marker = "/*__GCSIM_DATA__*/null"
+    if marker not in html:
+        raise ValueError(f"template {TEMPLATE} is missing the data marker")
+    out.write_text(html.replace(marker, blob), encoding="utf-8")
+    return out

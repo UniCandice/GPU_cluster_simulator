@@ -1,0 +1,1184 @@
+<meta charset="utf-8">
+<title>GPU Cluster Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600;650&display=swap">
+<style>
+/* Type. IBM Plex was drawn for an engineering and research context, which is the
+   register this page is in; Plex Mono carries every identifier, axis tick and
+   telemetry figure, so instrument readouts look like readouts and digits align
+   in columns. Both fall back to the system UI stack, which matters because this
+   file is meant to open from disk with no network. */
+:root {
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* ---------------------------------------------------------------------------
+   Tokens. Light is defined on bare :root so a page with no theme signal still
+   paints correctly; the dark values are declared twice, once for the OS setting
+   and once for an explicit theme stamp, so a viewer's toggle wins either way.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f4f3f0;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --ramp0:#cde2fb; --ramp1:#b7d3f6; --ramp2:#9ec5f4; --ramp3:#86b6ef;
+  --ramp4:#6da7ec; --ramp5:#3987e5; --ramp6:#256abf; --ramp7:#104281;
+  --shadow:0 1px 2px rgba(11,11,11,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --surface-2:#232322;
+    --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --ramp0:#104281; --ramp1:#184f95; --ramp2:#1c5cab; --ramp3:#256abf;
+    --ramp4:#3987e5; --ramp5:#5598e7; --ramp6:#86b6ef; --ramp7:#cde2fb;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:#0d0d0d; --surface:#1a1a19; --surface-2:#232322;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --ramp0:#104281; --ramp1:#184f95; --ramp2:#1c5cab; --ramp3:#256abf;
+  --ramp4:#3987e5; --ramp5:#5598e7; --ramp6:#86b6ef; --ramp7:#cde2fb;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
+}
+
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--page); color:var(--ink);
+  font:14px/1.55 var(--font-ui);
+  -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:1320px; margin:0 auto; padding:28px 20px 72px; }
+h1 { font-size:23px; margin:0 0 4px; letter-spacing:-.015em; font-weight:600;
+     text-wrap:balance; }
+h2 { font-size:15px; margin:0 0 3px; font-weight:620; letter-spacing:-.005em; }
+h3 { font-size:12px; margin:0 0 10px; font-weight:600; color:var(--ink-2);
+     text-transform:uppercase; letter-spacing:.07em; }
+p  { margin:0 0 10px; color:var(--ink-2); }
+.sub { color:var(--muted); font-size:12.5px; }
+code { font-family:var(--font-data); font-size:.92em; }
+:focus-visible { outline:2px solid var(--s1); outline-offset:2px; border-radius:5px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration:.01ms !important; animation-duration:.01ms !important; }
+}
+
+/* --- header ------------------------------------------------------------- */
+header { border-bottom:1px solid var(--border); padding-bottom:16px; margin-bottom:18px; }
+.metaline { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px;
+            font-size:12.5px; color:var(--muted); }
+.metaline b { color:var(--ink-2); font-weight:600; }
+.metaline span { font-family:var(--font-data); font-size:11.5px; }
+.metaline b { font-family:var(--font-ui); font-size:12.5px; }
+
+/* --- controls ----------------------------------------------------------- */
+.controls { display:flex; flex-wrap:wrap; gap:16px 26px; align-items:flex-end;
+            margin-bottom:20px; }
+.ctl label { display:block; font-size:11px; text-transform:uppercase;
+             letter-spacing:.07em; color:var(--muted); margin-bottom:6px; font-weight:600; }
+.pills { display:flex; flex-wrap:wrap; gap:5px; }
+.pill { border:1px solid var(--border); background:var(--surface); color:var(--ink-2);
+        padding:5px 11px; border-radius:7px; cursor:pointer; font:inherit; font-size:12.5px;
+        line-height:1.3; transition:background .12s,border-color .12s; }
+.pill:hover { background:var(--surface-2); }
+.pill[aria-pressed="true"] { background:var(--ink); color:var(--page);
+                             border-color:var(--ink); font-weight:560; }
+.tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:1px solid var(--border);
+        margin-bottom:22px; }
+.tab { border:0; background:none; color:var(--muted); font:inherit; font-size:13.5px;
+       padding:9px 13px; cursor:pointer; border-bottom:2px solid transparent;
+       margin-bottom:-1px; }
+.tab:hover { color:var(--ink-2); }
+.tab[aria-selected="true"] { color:var(--ink); border-bottom-color:var(--s1); font-weight:580; }
+
+/* --- cards -------------------------------------------------------------- */
+.card { background:var(--surface); border:1px solid var(--border); border-radius:11px;
+        padding:16px 18px; box-shadow:var(--shadow); }
+.card + .card { margin-top:16px; }
+.grid { display:grid; gap:16px; }
+.g2 { grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); }
+.g3 { grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); }
+.note { font-size:12.5px; color:var(--muted); margin:10px 0 0;
+        border-left:2px solid var(--grid); padding-left:11px; }
+.note b { color:var(--ink-2); font-weight:600; }
+
+/* --- stat tiles --------------------------------------------------------- */
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:1px;
+         background:var(--border); border:1px solid var(--border); border-radius:10px;
+         overflow:hidden; }
+.tile { background:var(--surface); padding:13px 15px; }
+.tile .k { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em;
+           color:var(--muted); font-weight:600; }
+.tile .v { font-size:23px; font-weight:500; letter-spacing:-.02em; margin-top:3px;
+            font-family:var(--font-data); font-variant-numeric:tabular-nums; }
+.tile .u { font-size:12px; color:var(--muted); font-weight:400; margin-left:2px; }
+.tile .d { font-size:11.5px; color:var(--muted); margin-top:2px; }
+
+/* --- badges ------------------------------------------------------------- */
+.badge { display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+         font-weight:600; padding:2.5px 8px; border-radius:999px;
+         border:1px solid var(--border); background:var(--surface-2); color:var(--ink-2); }
+.badge .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+.b-fault  .dot { background:var(--critical); }
+.b-change .dot { background:var(--warning); }
+.b-ok     .dot { background:var(--good); }
+
+/* --- tables ------------------------------------------------------------- */
+table { border-collapse:collapse; width:100%; font-size:12.5px; }
+th,td { text-align:right; padding:6px 9px; border-bottom:1px solid var(--grid);
+        white-space:nowrap; font-variant-numeric:tabular-nums; }
+td:not(:first-child) { font-family:var(--font-data); font-size:12px; }
+th:first-child,td:first-child { text-align:left; font-variant-numeric:normal;
+                                font-family:var(--font-ui); }
+th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase;
+     letter-spacing:.06em; border-bottom-color:var(--axis); }
+tbody tr:hover td { background:var(--surface-2); }
+td.hl { font-weight:650; color:var(--ink); }
+.scroll { overflow-x:auto; }
+
+/* --- signature matrix --------------------------------------------------- */
+.sig td, .sig th { text-align:center; }
+.sig td:first-child, .sig th:first-child { text-align:left; }
+.mv { display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:600; }
+.mv.up   { color:var(--critical); }
+.mv.down { color:var(--s1); }
+.mv.flat { color:var(--muted); font-weight:400; }
+.sig tr.key td { background:color-mix(in srgb,var(--warning) 9%,transparent); }
+
+/* --- charts ------------------------------------------------------------- */
+.chart { position:relative; }
+.chart svg { display:block; width:100%; overflow:visible; }
+.legend { display:flex; flex-wrap:wrap; gap:4px 14px; margin:2px 0 8px; font-size:12px;
+          color:var(--ink-2); }
+.legend span { display:inline-flex; align-items:center; gap:6px; }
+.legend i { width:10px; height:10px; border-radius:2.5px; display:inline-block; flex:none; }
+.hm { position:relative; }
+.hmwrap { position:relative; }
+.hm canvas { display:block; width:100%; height:290px; image-rendering:pixelated;
+             border-radius:4px; border:1px solid var(--border); }
+.hmmark { position:absolute; top:0; bottom:0; width:1px; background:var(--critical);
+          opacity:.8; pointer-events:none; }
+.hmmark span { position:absolute; top:4px; left:4px; font-size:10px; font-weight:600;
+               color:var(--critical); white-space:nowrap; background:var(--surface);
+               border:1px solid var(--border); border-radius:4px; padding:1px 5px; }
+.hmaxis { display:flex; justify-content:space-between; margin-top:5px;
+          font-family:var(--font-data); font-size:10px; color:var(--muted); }
+.structure { font-size:12.5px; margin:10px 0 0; padding:7px 11px; border-radius:7px;
+             background:var(--surface-2); border:1px solid var(--border); color:var(--ink-2); }
+.structure b { color:var(--ink); font-weight:620; }
+.rackrail { display:grid; gap:1px; }
+.rackrail div { font-size:10px; color:var(--muted); display:flex; align-items:center;
+                justify-content:flex-end; padding-right:7px; letter-spacing:.04em; }
+.scale { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--muted);
+         margin-top:9px; }
+.scale .bar { height:9px; width:150px; border-radius:3px; border:1px solid var(--border); }
+#tip { font-variant-numeric:tabular-nums; position:fixed; z-index:50; pointer-events:none; opacity:0;
+       transition:opacity .09s; background:var(--surface); color:var(--ink);
+       border:1px solid var(--border); border-radius:8px; padding:8px 11px;
+       font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,.16); max-width:290px; }
+#tip b { font-family:var(--font-data); }
+#tip b { font-weight:620; }
+#tip .row { display:flex; justify-content:space-between; gap:16px; }
+#tip .row i { width:8px; height:8px; border-radius:2px; display:inline-block;
+              margin-right:6px; flex:none; }
+
+/* --- evidence ----------------------------------------------------------- */
+ul.ev { margin:8px 0 0; padding-left:0; list-style:none; }
+ul.ev li { position:relative; padding:4px 0 4px 20px; color:var(--ink-2); font-size:13px; }
+ul.ev li::before { content:""; position:absolute; left:5px; top:12px; width:5px; height:5px;
+                   border-radius:50%; background:var(--s1); }
+.chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; }
+.chip { font-size:11px; font-family:var(--font-data);
+        background:var(--surface-2); border:1px solid var(--border);
+        padding:2px 7px; border-radius:5px; color:var(--ink-2); }
+.hidden { display:none !important; }
+@media (max-width:640px) { .wrap { padding:18px 13px 56px; } h1 { font-size:20px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>GPU Cluster Simulator &mdash; distributed CFD performance &amp; reliability</h1>
+  <p class="sub">A bulk-synchronous CFD job on a simulated 128-GPU cluster. Every telemetry
+     value on this page is an <em>observation of simulated physical state</em>, never a
+     number written by a scenario.</p>
+  <div class="metaline" id="meta"></div>
+</header>
+
+<div class="controls">
+  <div class="ctl"><label for="meshsel">Mesh resolution</label><div class="pills" id="meshsel"></div></div>
+  <div class="ctl" id="scenwrap"><label for="scensel">Scenario</label><div class="pills" id="scensel"></div></div>
+</div>
+
+<div class="tabs" id="tabs" role="tablist"></div>
+<div id="view"></div>
+</div>
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script>
+const DATA = /*__GCSIM_DATA__*/null;
+
+/* ===========================================================================
+   Chart layer. Hand-drawn SVG so every colour comes from a CSS custom property
+   and light/dark is one code path -- a bundled charting library would have cost
+   5 MB and needed a second palette maintained by hand.
+   =========================================================================== */
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+let redraws = [];
+
+const tok = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+const RAMP = () => [0,1,2,3,4,5,6,7].map(i => tok("--ramp"+i));
+const SERIES = () => [tok("--s1"), tok("--s2"), tok("--s3"), tok("--s4")];
+
+function mk(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) if (attrs[k] !== null && attrs[k] !== undefined)
+    e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const fmt = (v, d = 1) => (Math.abs(v) >= 1000 ? v.toLocaleString(undefined,
+  {maximumFractionDigits: 0}) : v.toFixed(d));
+
+function showTip(html, ev) {
+  tip.innerHTML = html;
+  tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.opacity = 0; };
+
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / p;
+  for (const step of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10])
+    if (n <= step + 1e-9) return step * p;
+  return 10 * p;
+}
+
+/* --- shared plot frame ---------------------------------------------------- */
+function frame(host, spec) {
+  host.innerHTML = "";
+  const H = spec.height || 210,
+        PAD = {t: spec.yLabel ? 22 : 10, r: spec.padRight || 54, b: 30, l: 56};
+  const W = Math.max(host.clientWidth || 640, 320);
+  const svg = mk("svg", {viewBox: `0 0 ${W} ${H}`, height: H,
+                         role: "img", "aria-label": spec.aria || spec.yLabel || "chart"}, host);
+  const iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
+  const y0 = spec.yMin !== undefined ? spec.yMin : 0;
+  const y1 = spec.yMax !== undefined ? spec.yMax : niceMax(spec.dataMax || 1);
+  const X = i => PAD.l + (spec.n <= 1 ? 0 : i / (spec.n - 1) * iw);
+  const Y = v => PAD.t + ih - (v - y0) / ((y1 - y0) || 1) * ih;
+
+  //  Tick precision follows the axis range: a 0-0.2 axis needs 3 decimals or
+  //  every label rounds to the same string.
+  const step = (y1 - y0) / 4;
+  const dec = Math.max(0, Math.min(3, Math.ceil(-Math.log10(step || 1)) + 1));
+  for (let k = 0; k <= 4; k++) {
+    const v = y0 + step * k, y = Y(v);
+    mk("line", {x1: PAD.l, x2: PAD.l + iw, y1: y, y2: y,
+                stroke: tok(k === 0 ? "--axis" : "--grid"), "stroke-width": 1}, svg);
+    mk("text", {x: PAD.l - 8, y: y + 3.5, "text-anchor": "end", "font-size": 10,
+                "font-family": tok("--font-data"), fill: tok("--muted")}, svg).textContent =
+      spec.yFmt ? spec.yFmt(v) : fmt(v, dec);
+  }
+  if (spec.yLabel)
+    mk("text", {x: 0, y: 8, "text-anchor": "start", "font-size": 10.5,
+                fill: tok("--muted"), "font-weight": 600}, svg).textContent = spec.yLabel;
+
+  const ticks = spec.xTicks || 5;
+  for (let k = 0; k <= ticks; k++) {
+    const i = Math.round((spec.n - 1) * k / ticks);
+    mk("text", {x: X(i), y: H - 10, "text-anchor": "middle", "font-size": 10,
+                "font-family": tok("--font-data"), fill: tok("--muted")}, svg).textContent =
+      spec.xFmt ? spec.xFmt(i) : String(i);
+  }
+  if (spec.xLabel)
+    mk("text", {x: PAD.l + iw / 2, y: H + 4, "text-anchor": "middle", "font-size": 10.5,
+                fill: tok("--muted")}, svg).textContent = spec.xLabel;
+
+  // injection markers, annotated inline
+  (spec.marks || []).forEach(m => {
+    const x = X(m.i);
+    mk("line", {x1: x, x2: x, y1: PAD.t, y2: PAD.t + ih, stroke: tok("--critical"),
+                "stroke-width": 1, opacity: .55}, svg);
+    mk("text", {x: x + 4, y: PAD.t + 10, "font-size": 10, fill: tok("--critical"),
+                "font-weight": 600}, svg).textContent = m.label;
+  });
+  return {svg, X, Y, PAD, iw, ih, W, H, y0, y1};
+}
+
+function attachHover(f, host, spec) {
+  const hit = mk("rect", {x: f.PAD.l, y: f.PAD.t, width: f.iw, height: f.ih,
+                          fill: "transparent"}, f.svg);
+  const cross = mk("line", {y1: f.PAD.t, y2: f.PAD.t + f.ih, stroke: tok("--axis"),
+                            "stroke-width": 1, opacity: 0}, f.svg);
+  hit.addEventListener("pointermove", ev => {
+    const b = f.svg.getBoundingClientRect();
+    const px = (ev.clientX - b.left) / b.width * f.W;
+    let i = Math.round((px - f.PAD.l) / (f.iw || 1) * (spec.n - 1));
+    i = Math.max(0, Math.min(spec.n - 1, i));
+    cross.setAttribute("x1", f.X(i)); cross.setAttribute("x2", f.X(i));
+    cross.setAttribute("opacity", .8);
+    const rows = spec.series.map(s =>
+      `<div class="row"><span><i style="background:${s.color}"></i>${s.name}</span>` +
+      `<b>${spec.vFmt ? spec.vFmt(s.values[i]) : fmt(s.values[i], 2)}</b></div>`).join("");
+    showTip(`<b>${spec.xTip ? spec.xTip(i) : i}</b>${rows}`, ev);
+  });
+  hit.addEventListener("pointerleave", () => { hideTip(); cross.setAttribute("opacity", 0); });
+}
+
+/* Lines. Every series is direct-labelled at its endpoint, so identity never
+   rests on colour alone -- which is also the relief the palette requires for
+   its lower-contrast light-mode slots. */
+function drawLines(host, spec) {
+  const flat = spec.series.flatMap(s => s.values);
+  const f = frame(host, {...spec, n: spec.n, dataMax: Math.max(...flat)});
+  spec.series.forEach(s => {
+    const d = s.values.map((v, i) => `${i ? "L" : "M"}${f.X(i).toFixed(1)},${f.Y(v).toFixed(1)}`).join("");
+    mk("path", {d, fill: "none", stroke: s.color, "stroke-width": 2,
+                "stroke-linejoin": "round", "stroke-linecap": "round"}, f.svg);
+  });
+
+  //  Direct labels at the endpoints, nudged apart so converging series stay
+  //  readable. Without this, four rack lines that end at the same value overlap
+  //  into an unreadable smear -- and these labels are exactly what stops
+  //  identity from depending on colour alone.
+  if (spec.labelEnds !== false) {
+    const last = spec.n - 1;
+    const lab = spec.series.map(s => ({name: s.name, color: s.color,
+                                       y: f.Y(s.values[last])}))
+                           .sort((a, b) => a.y - b.y);
+    const GAP = 12;
+    for (let i = 1; i < lab.length; i++)
+      if (lab[i].y - lab[i - 1].y < GAP) lab[i].y = lab[i - 1].y + GAP;
+    const overflow = lab.length ? lab[lab.length - 1].y - (f.PAD.t + f.ih) : 0;
+    if (overflow > 0) lab.forEach(l => l.y -= overflow);
+    lab.forEach(l => {
+      //  A colour mark beside the label, never coloured label text: when several
+      //  series carry the same value their lines coincide and only the last one
+      //  drawn is visible, so the swatch is what tells them apart.
+      mk("rect", {x: f.X(last) + 6, y: l.y - 3, width: 6, height: 6, rx: 1.5,
+                  fill: l.color}, f.svg);
+      mk("text", {x: f.X(last) + 16, y: l.y + 3.5, "font-size": 10.5,
+                  fill: tok("--ink-2"), "font-weight": 600}, f.svg).textContent = l.name;
+    });
+  }
+  attachHover(f, host, spec);
+}
+
+/* Stacked areas. A 2px surface gap separates adjacent fills instead of a border. */
+function drawStack(host, spec) {
+  const n = spec.n;
+  const totals = Array.from({length: n}, (_, i) =>
+    spec.series.reduce((a, s) => a + s.values[i], 0));
+  const f = frame(host, {...spec, dataMax: Math.max(...totals)});
+  const acc = new Array(n).fill(0);
+  spec.series.forEach(s => {
+    const top = acc.map((a, i) => a + s.values[i]);
+    const up = top.map((v, i) => `${i ? "L" : "M"}${f.X(i).toFixed(1)},${f.Y(v).toFixed(1)}`).join("");
+    const dn = acc.map((v, i) => `L${f.X(n - 1 - i).toFixed(1)},${f.Y(acc[n - 1 - i]).toFixed(1)}`).join("");
+    mk("path", {d: up + dn + "Z", fill: s.color, opacity: .92,
+                stroke: tok("--surface"), "stroke-width": 2}, f.svg);
+    for (let i = 0; i < n; i++) acc[i] = top[i];
+  });
+  attachHover(f, host, {...spec, series: [...spec.series].reverse()});
+}
+
+/* Bars. 4px rounded data-ends anchored to the baseline. */
+function drawBars(host, spec) {
+  const f = frame(host, {...spec, n: spec.values.length,
+                         dataMax: Math.max(...spec.values),
+                         xFmt: i => spec.labels[i] ?? "", xTicks: Math.min(spec.values.length - 1, 7)});
+  const n = spec.values.length;
+  const slot = f.iw / n;
+  //  A 2px surface gap separates adjacent bars instead of a stroke, and wide
+  //  bars are capped so a six-category chart reads as marks rather than blocks.
+  const w = Math.max(1, Math.min(slot - (n > 60 ? 0.6 : 2), spec.maxBarWidth || 46));
+  const inset = (slot - w) / 2;
+  spec.values.forEach((v, i) => {
+    const y = f.Y(v), h = Math.max(1, f.PAD.t + f.ih - y);
+    const r = mk("rect", {x: f.PAD.l + i * slot + inset, y, width: w, height: h,
+                          rx: Math.min(4, w / 2), fill: (spec.colors && spec.colors[i]) || tok("--s1")}, f.svg);
+    r.addEventListener("pointerenter", ev => showTip(
+      `<b>${spec.labels[i]}</b><div class="row"><span>${spec.yLabel || ""}</span>` +
+      `<b>${spec.vFmt ? spec.vFmt(v) : fmt(v, 2)}</b></div>` +
+      (spec.notes && spec.notes[i] ? `<div style="color:var(--muted);margin-top:4px">${spec.notes[i]}</div>` : ""), ev));
+    r.addEventListener("pointerleave", hideTip);
+  });
+}
+
+/* Heatmaps go to a canvas rather than 12,288 SVG rects: same pixels, a fraction
+   of the DOM, and it stays responsive while panning across 128 ranks. */
+function drawHeatmap(host, spec) {
+  host.innerHTML = "";
+  const rows = spec.matrix.length, cols = spec.matrix[0].length;
+  const wrap = document.createElement("div");
+  wrap.className = "hmwrap";
+  host.appendChild(wrap);
+  const c = document.createElement("canvas");
+  c.width = cols; c.height = rows;
+  if (spec.canvasHeight) c.style.height = spec.canvasHeight + "px";
+  wrap.appendChild(c);
+  const g = c.getContext("2d");
+  const img = g.createImageData(cols, rows);
+  const ramp = RAMP().map(h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16),
+                                parseInt(h.slice(5, 7), 16)]);
+  //  Colour domain. Anchoring at zero is right only when zero is a meaningful
+  //  reference -- barrier wait, where the culprit's near-zero wait must read as
+  //  the extreme. For occupancy and temperature the data lives nowhere near
+  //  zero, and anchoring there spends most of the ramp on values that never
+  //  occur, washing out the whole figure.
+  const flat = [];
+  for (const row of spec.matrix) for (const v of row) flat.push(v);
+  const dom = spec.domain || {mode: "data"};
+  let lo, hi = Math.max(...flat);
+
+  if (dom.mode === "zero") {
+    lo = 0;
+  } else {
+    //  Clip the low end at the 2nd percentile. A run opens with the mesh load,
+    //  where the devices are idle -- one column of a different regime that would
+    //  otherwise set the floor for the other ninety-five.
+    const sorted = Float64Array.from(flat).sort();
+    lo = sorted[Math.floor(sorted.length * 0.02)];
+    //  Guard the degenerate case: on a healthy run every GPU sits within a
+    //  degree of every other, and stretching that across the full ramp would
+    //  turn sensor noise into stripes that are not there.
+    if (dom.minSpan && hi - lo < dom.minSpan) {
+      const mid = (lo + hi) / 2;
+      lo = mid - dom.minSpan / 2;
+      hi = mid + dom.minSpan / 2;
+    }
+  }
+  if (hi - lo < 1e-9) hi = lo + 1;
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const t = Math.max(0, Math.min(1, (spec.matrix[y][x] - lo) / (hi - lo)));
+    const p = t * (ramp.length - 1), i0 = Math.floor(p), i1 = Math.min(ramp.length - 1, i0 + 1), k = p - i0;
+    const o = (y * cols + x) * 4;
+    for (let ch = 0; ch < 3; ch++) img.data[o + ch] = ramp[i0][ch] + (ramp[i1][ch] - ramp[i0][ch]) * k;
+    img.data[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+
+  //  Injection markers, drawn over the canvas rather than into it -- the bitmap
+  //  is 96 x 128 stretched by CSS, so anything drawn into it would be illegible.
+  //  Same treatment the SVG charts use, so the two read as one system.
+  (spec.marks || []).forEach(mark => {
+    const el = document.createElement("div");
+    el.className = "hmmark";
+    el.style.left = (100 * mark.x / Math.max(spec.xMax, 1e-9)) + "%";
+    el.innerHTML = `<span>${mark.label}</span>`;
+    wrap.appendChild(el);
+  });
+
+  c.addEventListener("pointermove", ev => {
+    const b = c.getBoundingClientRect();
+    const x = Math.max(0, Math.min(cols - 1, Math.floor((ev.clientX - b.left) / b.width * cols)));
+    const y = Math.max(0, Math.min(rows - 1, Math.floor((ev.clientY - b.top) / b.height * rows)));
+    showTip(spec.tipFor(y, x, spec.matrix[y][x]), ev);
+  });
+  c.addEventListener("pointerleave", hideTip);
+
+  if (spec.xTicks && spec.xTicks.length) {
+    const ax = document.createElement("div");
+    ax.className = "hmaxis";
+    ax.innerHTML = spec.xTicks.map(v => `<span>${v}</span>`).join("");
+    host.appendChild(ax);
+  }
+
+  const sc = document.createElement("div");
+  sc.className = "scale";
+  const grad = RAMP().join(",");
+  sc.innerHTML = `<span>${spec.fmt(lo)}</span>` +
+    `<span class="bar" style="background:linear-gradient(90deg,${grad})"></span>` +
+    `<span>${spec.fmt(hi)}</span>`;
+  host.appendChild(sc);
+}
+
+function legend(items) {
+  return `<div class="legend">` + items.map(s =>
+    `<span><i style="background:${s.color}"></i>${s.name}</span>`).join("") + `</div>`;
+}
+
+/* ===========================================================================
+   App
+   =========================================================================== */
+const TABS = ["Overview", "Timeline", "Ranks", "Mesh & partitioning",
+              "Telemetry & fabric", "Diagnosis"];
+const state = {mesh: DATA.default_mesh, scenario: "straggler", tab: 0, rankMetric: "wait"};
+
+/* The whole view is addressable: #tab=2&scenario=thermal&mesh=fine&metric=temperature.
+   Deep links make a specific finding shareable, and let the build be screenshotted
+   view by view. */
+function readHash() {
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.has("tab")) state.tab = Math.max(0, Math.min(TABS.length - 1, +q.get("tab") || 0));
+  if (DATA.meshes.includes(q.get("mesh"))) state.mesh = q.get("mesh");
+  if (DATA.scenarios.some(s => s.name === q.get("scenario"))) state.scenario = q.get("scenario");
+  if (["wait", "occupancy", "temperature"].includes(q.get("metric")))
+    state.rankMetric = q.get("metric");
+}
+function writeHash() {
+  const h = `tab=${state.tab}&mesh=${state.mesh}&scenario=${state.scenario}` +
+            (state.tab === 2 ? `&metric=${state.rankMetric}` : "");
+  if (location.hash.slice(1) !== h) history.replaceState(null, "", "#" + h);
+}
+const runKey = () => `${state.scenario}__${state.mesh}`;
+const run = () => DATA.runs[runKey()];
+const scen = n => DATA.scenarios.find(s => s.name === n);
+
+function verdictBadge(v) {
+  const map = {HARDWARE_FAULT: ["b-fault", "Hardware fault"],
+               WORKLOAD_CHANGE: ["b-change", "Workload change"],
+               NOMINAL: ["b-ok", "Nominal"]};
+  const [cls, label] = map[v] || ["b-ok", v];
+  return `<span class="badge ${cls}"><span class="dot"></span>${label}</span>`;
+}
+const statusColor = v => v === "HARDWARE_FAULT" ? tok("--critical")
+  : v === "WORKLOAD_CHANGE" ? tok("--warning") : tok("--good");
+
+function tiles(items) {
+  return `<div class="tiles">` + items.map(t =>
+    `<div class="tile"><div class="k">${t.k}</div>` +
+    `<div class="v">${t.v}<span class="u">${t.u || ""}</span></div>` +
+    (t.d ? `<div class="d">${t.d}</div>` : "") + `</div>`).join("") + `</div>`;
+}
+
+function chartCard(title, note) {
+  return `<div class="card"><h2>${title}</h2>${note ? `<p class="sub">${note}</p>` : ""}`;
+}
+
+/* --- header + controls ---------------------------------------------------- */
+function renderChrome() {
+  const m = DATA.meta;
+  document.getElementById("meta").innerHTML = [
+    ["Cluster", m.cluster], ["GPU", m.gpu_model], ["Workload", m.workload],
+    ["Telemetry", m.sample_interval_s + " s sample interval"],
+    ["Seed", m.seeds.join(", ")], ["Generated", m.generated],
+  ].map(([k, v]) => `<span><b>${k}:</b> ${v}</span>`).join("");
+
+  const mesh = document.getElementById("meshsel");
+  mesh.innerHTML = DATA.meshes.map(n =>
+    `<button class="pill" data-mesh="${n}" aria-pressed="${n === state.mesh}">` +
+    `${DATA.partitions[n].label}</button>`).join("");
+  mesh.onclick = e => { const b = e.target.closest("[data-mesh]"); if (!b) return;
+                        state.mesh = b.dataset.mesh; render(); };
+
+  const sc = document.getElementById("scensel");
+  sc.innerHTML = DATA.scenarios.map(s =>
+    `<button class="pill" data-scen="${s.name}" aria-pressed="${s.name === state.scenario}">` +
+    `${s.label}</button>`).join("");
+  sc.onclick = e => { const b = e.target.closest("[data-scen]"); if (!b) return;
+                      state.scenario = b.dataset.scen; render(); };
+
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = TABS.map((t, i) =>
+    `<button class="tab" role="tab" data-tab="${i}" aria-selected="${i === state.tab}">${t}</button>`).join("");
+  tabs.onclick = e => { const b = e.target.closest("[data-tab]"); if (!b) return;
+                        state.tab = +b.dataset.tab; render(); };
+  document.getElementById("scenwrap").classList.toggle("hidden", state.tab === 0 || state.tab === 3);
+}
+
+/* --- tab 0: overview ------------------------------------------------------ */
+function tabOverview() {
+  const v = document.getElementById("view");
+  const rows = DATA.scenarios.map(s => ({s, r: DATA.runs[`${s.name}__${state.mesh}`]}))
+                             .filter(x => x.r);
+  const base = DATA.runs[`healthy__${state.mesh}`].summary;
+
+  v.innerHTML = `
+    <div class="card">
+      <h2>Every scenario on the ${state.mesh} mesh</h2>
+      <p class="sub">Six runs of the same job on the same cluster. The verdict comes from a
+        rule-based classifier that reads telemetry only &mdash; it never sees which scenario
+        it is looking at. Ground truth is shown beside it.</p>
+      ${tiles([
+        {k: "Baseline timestep", v: fmt(base.mean_iteration_time_s * 1e3, 1), u: "ms",
+         d: "healthy reference"},
+        {k: "Parallel efficiency", v: fmt(base.parallel_efficiency * 100, 1), u: "%",
+         d: "vs. perfectly balanced, zero-comm"},
+        {k: "SM occupancy", v: fmt(base.mean_sm_occupancy_pct, 1), u: "%",
+         d: "utilisation reads " + fmt(base.mean_utilization_pct, 1) + "%"},
+        {k: "Partition imbalance", v: fmt(base.mesh_imbalance, 4), u: "&times;",
+         d: DATA.partitions[state.mesh].imbalance > 1.001 ? "ragged &mdash; no fault present" : "exact"},
+        {k: "Classifier", v: rows.filter(x => x.s.fault === (x.r.summary.diagnosis.verdict === "HARDWARE_FAULT")).length +
+             "/" + rows.length, u: "", d: "agreed with ground truth"},
+      ])}
+    </div>
+
+    <div class="card">
+      <h2>Throughput cost by scenario</h2>
+      <p class="sub">Colour is the classifier's verdict, not the series identity &mdash; every bar
+         is labelled, so the status colour never carries meaning on its own.</p>
+      <div class="chart" id="c-over"></div>
+      <div class="legend">
+        <span><i style="background:var(--critical)"></i>Hardware fault</span>
+        <span><i style="background:var(--warning)"></i>Workload change</span>
+        <span><i style="background:var(--good)"></i>Nominal</span>
+      </div>
+      <p class="note"><b>The two tallest bars are different faults.</b>
+         <code>straggler</code> and <code>gpu_degradation</code> cost the job almost exactly the
+         same time and widen the rank spread by almost exactly the same amount. Nothing in this
+         chart separates them &mdash; see the Diagnosis tab for what does.</p>
+    </div>
+
+    <div class="card"><h2>Scenario detail</h2><div class="scroll"><table>
+      <thead><tr><th>Scenario</th><th>Ground truth</th><th>Verdict</th><th>Tier</th>
+        <th>Timestep</th><th>vs healthy</th><th>Rank spread</th><th>Max temp</th>
+        <th>Throttled</th></tr></thead><tbody>
+      ${rows.map(({s, r}) => {
+        const d = r.summary.diagnosis, su = r.summary;
+        const dv = (su.mean_iteration_time_s / base.mean_iteration_time_s - 1) * 100;
+        return `<tr><td class="hl">${s.label}</td>
+          <td>${s.fault ? "fault" : "not a fault"}</td>
+          <td>${verdictBadge(d.verdict)}</td><td>${d.tier}</td>
+          <td>${fmt(su.mean_iteration_time_s * 1e3, 1)} ms</td>
+          <td>${dv > 0.5 ? "+" : ""}${fmt(dv, 1)}%</td>
+          <td>${fmt(su.mean_rank_spread_s * 1e3, 1)} ms</td>
+          <td>${fmt(su.max_temperature_c, 1)} &deg;C</td>
+          <td>${su.throttle_reasons.length ? su.throttle_reasons.join(", ") : "&mdash;"}</td></tr>`;
+      }).join("")}
+    </tbody></table></div></div>`;
+
+  redraws = [() => {
+    const bars = rows.map(({s, r}) => ({
+      label: s.name,
+      v: (r.summary.mean_iteration_time_s / base.mean_iteration_time_s - 1) * 100,
+      c: statusColor(r.summary.diagnosis.verdict),
+      note: r.summary.diagnosis.evidence[0] || "",
+    }));
+    drawBars(document.getElementById("c-over"), {
+      values: bars.map(b => Math.max(b.v, 0)), labels: bars.map(b => b.label),
+      colors: bars.map(b => b.c), notes: bars.map(b => b.note),
+      yLabel: "% slower than healthy", height: 200,
+      vFmt: x => "+" + fmt(x, 1) + "%",
+    });
+  }];
+}
+
+/* --- tab 1: timeline ------------------------------------------------------ */
+function tabTimeline() {
+  const r = run(), j = r.job, s = scen(state.scenario), C = SERIES();
+  const marks = r.marks.map(m => ({i: m.iteration - 1, label: m.label}));
+  const series = [
+    {name: "compute", color: C[0], values: j.compute_ms},
+    {name: "halo exchange", color: C[1], values: j.halo_ms},
+    {name: "barrier wait + collective",
+     color: C[2], values: j.wait_ms.map((w, i) => w + j.allreduce_ms[i])},
+    {name: "field output", color: C[3], values: j.output_ms},
+  ];
+  document.getElementById("view").innerHTML = `
+    <div class="card">
+      <h2>${s.label}</h2><p class="sub">${s.description}</p>
+    </div>
+    ${chartCard("Where each timestep goes",
+      "Stack height is the timestep itself: the four bands account for all of it, so nothing is hidden.")}
+      ${legend(series)}
+      <div class="chart" id="c-stack"></div>
+      <p class="note">Read the bands, not the height: <b>compute</b> is unchanged by most faults,
+        and it is the <b>barrier wait</b> band appearing that says a subset of ranks fell behind.</p>
+    </div>
+    ${chartCard("Timestep duration and rank spread",
+      "Rank spread is the gap between the slowest and fastest rank. A localised fault widens it; a workload change does not.")}
+      <div class="chart" id="c-iter"></div>
+      <div class="chart" id="c-spread" style="margin-top:14px"></div>
+      <p class="note">The regular spikes every ${DATA.meta.workload.split("every ")[1]} timesteps
+        are <b>field output</b>, and they are in the healthy baseline too. Output is a legitimate
+        phase, not a fault &mdash; a detector calibrated on a flat baseline would fire on it.</p>
+    </div>`;
+
+  const xf = i => "step " + j.iteration[i];
+  redraws = [() => {
+    drawStack(document.getElementById("c-stack"), {
+      n: j.iteration.length, series, marks, height: 250,
+      yLabel: "ms", xLabel: "timestep", xFmt: i => j.iteration[i], xTip: xf,
+      vFmt: x => fmt(x, 2) + " ms", aria: "phase breakdown per timestep",
+    });
+    drawLines(document.getElementById("c-iter"), {
+      n: j.iteration.length, marks, height: 175, yLabel: "ms", xFmt: i => j.iteration[i],
+      xTip: xf, vFmt: x => fmt(x, 2) + " ms", padRight: 70,
+      series: [{name: "timestep", color: SERIES()[0], values: j.iter_ms}],
+    });
+    drawLines(document.getElementById("c-spread"), {
+      n: j.iteration.length, marks, height: 155, yLabel: "ms", xLabel: "timestep",
+      xFmt: i => j.iteration[i], xTip: xf, vFmt: x => fmt(x, 2) + " ms", padRight: 70,
+      series: [{name: "rank spread", color: SERIES()[1], values: j.spread_ms}],
+    });
+  }];
+}
+
+/* Describe the ORIENTATION of the structure in a rank x time matrix.
+   This is a description of the data, not a verdict -- the classifier lives on
+   the Diagnosis tab and is the thing being checked, so this must not restate it.
+
+   Rank structure is tested first and independently of time structure, because a
+   matrix routinely has both: the straggler run has a strong regime change in
+   time AND one deviant rank, and comparing the two variances alone would report
+   only the larger of them and miss the rank entirely. */
+function describeStructure(matrix, gpuIds, gpusPerRack) {
+  const rows = matrix.length, cols = matrix[0].length;
+  const rowMean = new Array(rows).fill(0), colMean = new Array(cols).fill(0);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) { rowMean[y] += matrix[y][x]; colMean[x] += matrix[y][x]; }
+    rowMean[y] /= cols;
+  }
+  for (let x = 0; x < cols; x++) colMean[x] /= rows;
+  const sd = a => {
+    const m = a.reduce((p, c) => p + c, 0) / a.length;
+    return Math.sqrt(a.reduce((p, c) => p + (c - m) ** 2, 0) / a.length);
+  };
+
+  //  Median absolute deviation, not standard deviation: with 32 of 128 ranks
+  //  affected, an SD-based threshold is inflated by the very outliers it is
+  //  meant to find, and reports nothing.
+  const med = a => { const b = [...a].sort((p, q) => p - q); return b[b.length >> 1]; };
+  const centre = med(rowMean);
+  const mad = med(rowMean.map(v => Math.abs(v - centre))) || 1e-9;
+  const out = [];
+  for (let y = 0; y < rows; y++)
+    if (Math.abs(rowMean[y] - centre) / (1.4826 * mad) > 6) out.push(y);
+
+  if (out.length) {
+    const contiguous = out.length > 1 && out[out.length - 1] - out[0] + 1 === out.length;
+    const racks = [...new Set(out.map(y => Math.floor(y / gpusPerRack)))];
+    const above = rowMean[out[0]] > centre;
+    const where = out.length === 1
+      ? "rank " + out[0] + " (<code>" + gpuIds[out[0]] + "</code>)"
+      : out.length + " ranks" +
+        (contiguous && racks.length === 1
+          ? " &mdash; a contiguous block, the whole of rack r" + racks[0]
+          : contiguous ? " &mdash; a contiguous block"
+                       : " across rack(s) " + racks.map(r => "r" + r).join(", "));
+    return {kind: "rank", html:
+      "<b>Rank-localised.</b> " + where + " sit " + (above ? "above" : "below") +
+      " the fleet. Structure in the vertical direction means the cause is attached to " +
+      "specific hardware."};
+  }
+  if (sd(colMean) > 2 * sd(rowMean)) {
+    return {kind: "time", html:
+      "<b>Time-aligned.</b> Every rank moves together &mdash; the bands run the full height " +
+      "of the plot. That is the job doing something to itself, usually field output or a " +
+      "barrier everyone hits at once. It is present in the healthy baseline too. No fault " +
+      "attached to one GPU, node or rack can produce this pattern."};
+  }
+  return {kind: "flat", html:
+    "<b>Uniform.</b> No structure in either direction on this channel. If a fault is present " +
+    "it is not visible here &mdash; try the other two metrics."};
+}
+
+/* --- tab 2: ranks --------------------------------------------------------- */
+function tabRanks() {
+  const r = run(), rk = r.ranks, meta = DATA.meta;
+  //  `domain` decides what the colour ramp spans. Zero-anchored only where zero
+  //  is a meaningful reference; `minSpan` is quoted in display units.
+  const metrics = {
+    wait: {label: "Barrier wait", unit: "ms", scale: 1, fmt: v => fmt(v, 0) + " ms",
+           domain: {mode: "zero"},
+           note: "Time each rank spent blocked at the barrier, on a zero-anchored scale. " +
+                 "Read it inverted: the <b>darkest</b> line is the rank everyone else is " +
+                 "waiting for, and every bright rank is a victim."},
+    occupancy: {label: "SM occupancy", unit: "%", scale: .1, fmt: v => fmt(v, 1) + "%",
+           domain: {mode: "data", minSpan: 5},
+           note: "Work actually retired, while utilisation stays pinned near 100%. " +
+                 "<b>Vertical</b> bands are timesteps where every rank stalls together &mdash; " +
+                 "field output, or a barrier the whole job is waiting on. <b>Horizontal</b> " +
+                 "bands are a fault attached to particular hardware."},
+    temperature: {label: "Temperature", unit: "°C", scale: .1, fmt: v => fmt(v, 1) + " °C",
+           domain: {mode: "data", minSpan: 5},
+           note: "Inlet temperature is a rack property, so a cooling failure heats all 32 GPUs " +
+                 "in a rack together and appears as a contiguous block &mdash; never a scatter."},
+  };
+  const m = metrics[state.rankMetric];
+  const gpr = meta.gpus_per_rack;
+  const structure = describeStructure(rk[state.rankMetric], rk.gpu_ids, gpr);
+
+  document.getElementById("view").innerHTML = `
+    <div class="card">
+      <h2>Rank &times; time</h2>
+      <p class="sub">128 ranks down, wall-clock across. Rank order follows the decomposition, so
+        ranks 0&ndash;7 share a node and ranks 0&ndash;31 share a rack &mdash;
+        <b>a single bad GPU is one line, a rack fault is a solid block of 32.</b></p>
+      <div class="pills" id="metricsel" style="margin:10px 0 12px">
+        ${Object.entries(metrics).map(([k, v]) =>
+          `<button class="pill" data-metric="${k}" aria-pressed="${k === state.rankMetric}">${v.label}</button>`).join("")}
+      </div>
+      <div style="display:grid;grid-template-columns:48px 1fr;gap:8px;align-items:stretch">
+        <div class="rackrail" style="grid-template-rows:repeat(${meta.racks},1fr)">
+          ${Array.from({length: meta.racks}, (_, i) => `<div>rack r${i}</div>`).join("")}
+        </div>
+        <div class="hm" id="c-hm"></div>
+      </div>
+      <p class="structure">${structure.html}</p>
+      <p class="note">${m.note}</p>
+    </div>
+    ${chartCard("Per-rank work and wait, late in the run",
+      "The inversion the whole diagnosis rests on: a slow rank has almost no wait, while all 127 peers accumulate it.")}
+      ${legend([{name: "mean busy time", color: SERIES()[0]},
+                {name: "mean barrier wait", color: SERIES()[1]}])}
+      <div class="chart" id="c-busy"></div>
+      <div class="chart" id="c-wait" style="margin-top:14px"></div>
+      <p class="note">Read them together. The rank that is <b>tallest on top and shortest on the
+        bottom</b> is the cause; every rank that looks idle is a victim. A dashboard that only
+        showed wait time would blame the wrong 127 GPUs.</p>
+    </div>`;
+
+  document.getElementById("metricsel").onclick = e => {
+    const b = e.target.closest("[data-metric]"); if (!b) return;
+    state.rankMetric = b.dataset.metric; render();
+  };
+
+  redraws = [() => {
+    const mat = rk[state.rankMetric];
+    const tMax = rk.t[rk.t.length - 1];
+    //  minSpan is quoted in display units; the matrix travels in tenths.
+    const domain = m.domain.minSpan
+      ? {...m.domain, minSpan: m.domain.minSpan / m.scale} : m.domain;
+    drawHeatmap(document.getElementById("c-hm"), {
+      matrix: mat, fmt: v => m.fmt(v * m.scale), unit: m.unit, domain,
+      marks: r.marks.map(k => ({x: k.t, label: k.label})), xMax: tMax,
+      xTicks: Array.from({length: 6}, (_, i) =>
+        fmt(rk.t[Math.round(i / 5 * (rk.t.length - 1))], 0) + " s"),
+      tipFor: (y, x, v) => `<b>rank ${y}</b> &middot; ${rk.gpu_ids[y]}` +
+        `<div class="row"><span>${m.label}</span><b>${m.fmt(v * m.scale)}</b></div>` +
+        `<div class="row"><span>time</span><b>${fmt(rk.t[x], 0)} s</b></div>`,
+    });
+    const labels = rk.mean_busy_ms.map((_, i) => "rank " + i);
+    drawBars(document.getElementById("c-busy"), {
+      values: rk.mean_busy_ms, labels, yLabel: "busy ms", height: 165,
+      vFmt: x => fmt(x, 1) + " ms", colors: rk.mean_busy_ms.map(() => SERIES()[0]),
+    });
+    drawBars(document.getElementById("c-wait"), {
+      values: rk.mean_wait_ms, labels, yLabel: "wait ms", height: 165,
+      vFmt: x => fmt(x, 1) + " ms", colors: rk.mean_wait_ms.map(() => SERIES()[1]),
+    });
+  }];
+}
+
+/* --- tab 3: mesh ---------------------------------------------------------- */
+function tabMesh() {
+  const study = DATA.mesh_study, p = DATA.partitions[state.mesh];
+  const px = p.grid[0], rows = p.grid[1] * p.grid[2];
+  const grid = Array.from({length: rows}, () => new Array(px).fill(0));
+  p.coords.forEach((c, r) => { grid[c[1] + p.grid[1] * c[2]][c[0]] = p.cells[r]; });
+  const mean = p.cells.reduce((a, b) => a + b, 0) / p.cells.length;
+
+  document.getElementById("view").innerHTML = `
+    <div class="card">
+      <h2>Mesh partitioning vs GPU utilisation</h2>
+      <p class="sub">Same cluster, same code, no fault anywhere. Compute scales with subdomain
+        <b>volume</b>; halo traffic scales with subdomain <b>surface area</b>. Resolution alone
+        therefore sets how much of each timestep is useful work.</p>
+      <div class="grid g3" style="margin-top:14px">
+        <div><h3>SM occupancy</h3><div class="chart" id="c-occ"></div></div>
+        <div><h3>Parallel efficiency</h3><div class="chart" id="c-eff"></div></div>
+        <div><h3>Halo cost per unit of ideal compute</h3><div class="chart" id="c-halo"></div></div>
+      </div>
+      <p class="note">Three separate charts, never one with two y-axes. The third measures halo
+        cost against <b>ideal</b> compute rather than achieved: a coarse mesh inflates its own
+        denominator through the occupancy penalty, which would mask the effect being measured.</p>
+    </div>
+
+    <div class="card">
+      <h2>Process grid &mdash; cells owned by each rank</h2>
+      <p class="sub">The ${p.grid.join(" &times; ")} process grid over a
+        ${p.dims.join(" &times; ")} mesh. Each cell is one rank; colour is the cells it owns.</p>
+      <div style="display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:22px;
+                  align-items:start;margin-top:6px">
+        <div class="hm" id="c-grid"></div>
+        <div>
+      <p class="note" style="margin-top:0">${p.imbalance > 1.001
+        ? `<b>Visibly ragged.</b> ${p.dims[0]} divides neither grid extent, so low-index ranks
+           own up to ${fmt((p.imbalance - 1) * 100, 1)}% more cells than the mean. That is real
+           load imbalance on perfectly healthy hardware &mdash; the control case for every
+           straggler scenario on this dashboard.`
+        : `<b>Exact.</b> Every rank owns precisely ${fmt(mean, 0)} cells, so any imbalance seen
+           elsewhere in this run has to come from the hardware.`}</p>
+      <p class="note">Columns are the 8 ranks that share a node; each block of
+        ${p.grid[1]} rows is one rack. The colour scale spans the <b>actual</b> range of cell
+        counts, not zero to max &mdash; a few percent of imbalance is the whole story here, and
+        a zero baseline would flatten it to one shade.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><h2>The three meshes</h2><div class="scroll"><table>
+      <thead><tr><th>Mesh</th><th>Dims</th><th>Cells/rank</th><th>Imbalance</th>
+        <th>Surface:volume</th><th>Halo/step</th><th>Memory/rank</th><th>Occupancy</th>
+        <th>Utilisation</th><th>Halo/ideal</th><th>Timestep</th><th>Efficiency</th></tr></thead>
+      <tbody>${study.map(m => `<tr>
+        <td class="hl">${m.mesh}</td><td>${m.dims}</td>
+        <td>${Math.round(m.cells_per_rank).toLocaleString()}</td>
+        <td>${fmt(m.partition_imbalance, 4)}</td><td>${fmt(m.surface_to_volume, 4)}</td>
+        <td>${fmt(m.halo_mb_per_iter, 0)} MB</td><td>${fmt(m.memory_per_rank_gb, 2)} GB</td>
+        <td>${fmt(m.sm_occupancy_pct, 1)}%</td><td>${fmt(m.utilization_pct, 1)}%</td>
+        <td>${fmt(m.halo_per_ideal_compute, 3)}</td>
+        <td>${fmt(m.iteration_time_s * 1e3, 1)} ms</td>
+        <td>${fmt(m.parallel_efficiency * 100, 1)}%</td></tr>`).join("")}</tbody>
+    </table></div>
+      <p class="note"><b>Utilisation is flat at ~99.9% across all three</b> while occupancy runs
+        from ${fmt(study[0].sm_occupancy_pct, 0)}% to ${fmt(study[study.length - 1].sm_occupancy_pct, 0)}%.
+        A fleet dashboard showing only utilisation would report the coarse mesh as fully busy
+        while it wasted two-thirds of the hardware.</p>
+    </div>`;
+
+  redraws = [() => {
+    const one = SERIES()[0], labels = study.map(m => m.mesh);
+    drawBars(document.getElementById("c-occ"), {values: study.map(m => m.sm_occupancy_pct),
+      labels, yLabel: "%", height: 165, vFmt: x => fmt(x, 1) + "%",
+      colors: study.map(() => one)});
+    drawBars(document.getElementById("c-eff"), {values: study.map(m => m.parallel_efficiency * 100),
+      labels, yLabel: "%", height: 165, vFmt: x => fmt(x, 1) + "%",
+      colors: study.map(() => one)});
+    drawBars(document.getElementById("c-halo"), {values: study.map(m => m.halo_per_ideal_compute),
+      labels, yLabel: "ratio", height: 165, vFmt: x => fmt(x, 3),
+      colors: study.map(() => one)});
+    drawHeatmap(document.getElementById("c-grid"), {
+      matrix: grid, fmt: v => Math.round(v).toLocaleString(), canvasHeight: 420,
+      domain: {mode: "data"},
+      tipFor: (y, x, v) => {
+        const rank = x + p.grid[0] * y;
+        return `<b>rank ${rank}</b><div class="row"><span>cells</span>` +
+          `<b>${Math.round(v).toLocaleString()}</b></div>` +
+          `<div class="row"><span>vs mean</span><b>${v > mean ? "+" : ""}${fmt((v / mean - 1) * 100, 2)}%</b></div>`;
+      },
+    });
+  }];
+}
+
+/* --- tab 4: telemetry & fabric -------------------------------------------- */
+function tabTelemetry() {
+  const r = run(), t = r.telemetry, fb = r.fabric, C = SERIES();
+  const rackSeries = key => t.racks.map((rk, i) => ({name: rk, color: C[i % 4], values: t[key][rk]}));
+  const leafSeries = key => fb.leaves.map((d, i) => ({name: d, color: C[i % 4], values: fb[key][d]}));
+  const xf = i => fmt(t.t[i], 0) + " s";
+  const marks = r.marks.map(m => ({i: Math.round(m.t / t.t[t.t.length - 1] * (t.t.length - 1)),
+                                   label: m.label}));
+
+  document.getElementById("view").innerHTML = `
+    ${chartCard("Utilisation vs SM occupancy",
+      "Two channels most dashboards treat as one number. They are computed from different quantities here, and the gap between them is the point.")}
+      ${legend([{name: "utilisation", color: C[0]}, {name: "SM occupancy", color: C[1]}])}
+      <div class="chart" id="c-uo"></div>
+      <p class="note">A rank blocked in a collective keeps a spin kernel resident, so
+        <b>utilisation stays pinned near 100% while it does nothing</b>. Occupancy tracks work
+        actually retired and falls. That divergence is the clearest fingerprint of a
+        synchronisation stall, and a model deriving power from utilisation could not produce it.</p>
+    </div>
+
+    <div class="card">
+      <h2>Per-rack GPU telemetry</h2>
+      <p class="sub">Averaged over the 32 GPUs in each rack. Every line is labelled at its
+        endpoint, so identity never depends on colour.</p>
+      <div class="grid g3" style="margin-top:12px">
+        <div><h3>Temperature (&deg;C)</h3><div class="chart" id="c-temp"></div></div>
+        <div><h3>SM clock (MHz)</h3><div class="chart" id="c-clk"></div></div>
+        <div><h3>Board power (W)</h3><div class="chart" id="c-pwr"></div></div>
+      </div>
+      <p class="note"><b>Clock and power falling together, while utilisation holds,</b> is what
+        distinguishes a throttled GPU from an idle one. An idle GPU sheds power with its clock
+        still at boost. The ${DATA.meta.slowdown_c} &deg;C slowdown threshold is where the
+        staircase begins.</p>
+    </div>
+
+    <div class="card">
+      <h2>Fabric</h2>
+      <p class="sub">Per network domain. A rack is both a leaf switch and a cooling zone, which
+        is why rack-scoped faults show up as contiguous blocks everywhere else on this page.</p>
+      <div class="grid g3" style="margin-top:12px">
+        <div><h3>Uplink utilisation (%)</h3><div class="chart" id="c-upl"></div></div>
+        <div><h3>Active uplinks</h3><div class="chart" id="c-act"></div></div>
+        <div><h3>Cumulative frame drops (M)</h3><div class="chart" id="c-drop"></div></div>
+      </div>
+      <p class="note">Counter conservation: bytes recorded on a leaf's uplink ports equal the
+        halo traffic whose route genuinely left that rack. Switch telemetry here is
+        <b>derived from routed flows</b>, not bookkeeping invented alongside them.</p>
+      <div class="scroll" style="margin-top:10px"><table>
+        <thead><tr><th>Domain</th><th>Uplink tx</th><th>Uplink rx</th>
+          <th>Downlink rx</th><th>Active uplinks</th></tr></thead>
+        <tbody>${fb.conservation.map(c => `<tr><td class="hl">${c.domain_id}</td>
+          <td>${fmt(c.uplink_tx_gb, 1)} GB</td><td>${fmt(c.uplink_rx_gb, 1)} GB</td>
+          <td>${fmt(c.downlink_rx_gb, 1)} GB</td>
+          <td>${c.active_uplinks}</td></tr>`).join("")}</tbody></table></div>
+    </div>
+
+    <div class="card">
+      <h2>Storage and host pressure</h2>
+      <p class="sub">Where a legitimate workload change shows up &mdash; and where a hardware
+        fault does not.</p>
+      <div class="grid g2" style="margin-top:12px">
+        <div><h3>Write latency (ms)</h3><div class="chart" id="c-slat"></div></div>
+        <div><h3>Writeback backlog (GB)</h3><div class="chart" id="c-dirty"></div></div>
+      </div>
+      <div style="margin-top:14px">
+        <h3>Node pressure</h3>
+        ${legend([{name: "cpu", color: C[0]}, {name: "memory", color: C[1]}, {name: "io", color: C[2]}])}
+        <div class="chart" id="c-node"></div>
+      </div>
+      <p class="note">If outputs arrive faster than the filesystem drains them the backlog never
+        reaches zero, so the <b>baseline between outputs rises too</b> &mdash; a sustained shift
+        rather than a train of isolated spikes. Nothing about it is a hardware fault.</p>
+    </div>`;
+
+  const common = {n: t.t.length, xFmt: i => fmt(t.t[i], 0), xTip: xf, marks, height: 175,
+                  xLabel: "seconds"};
+  redraws = [() => {
+    drawLines(document.getElementById("c-uo"), {...common, height: 195, yLabel: "%", yMax: 100,
+      padRight: 86, vFmt: x => fmt(x, 1) + "%",
+      series: [{name: "utilisation", color: C[0], values: t.utilisation},
+               {name: "occupancy", color: C[1], values: t.occupancy}]});
+    drawLines(document.getElementById("c-temp"), {...common, yLabel: "°C", padRight: 34,
+      vFmt: x => fmt(x, 1), series: rackSeries("rack_temperature")});
+    drawLines(document.getElementById("c-clk"), {...common, yLabel: "MHz", padRight: 34,
+      yMin: 1000, vFmt: x => fmt(x, 0), series: rackSeries("rack_clock")});
+    drawLines(document.getElementById("c-pwr"), {...common, yLabel: "W", padRight: 34,
+      vFmt: x => fmt(x, 0), series: rackSeries("rack_power")});
+    drawLines(document.getElementById("c-upl"), {...common, yLabel: "%", padRight: 34,
+      vFmt: x => fmt(x, 1) + "%", series: leafSeries("uplink_util")});
+    drawLines(document.getElementById("c-act"), {...common, yLabel: "links", padRight: 34,
+      yMax: 9, vFmt: x => fmt(x, 0), series: leafSeries("active_uplinks")});
+    drawLines(document.getElementById("c-drop"), {...common, yLabel: "M", padRight: 34,
+      vFmt: x => fmt(x, 2) + "M", series: leafSeries("drops_m")});
+    drawLines(document.getElementById("c-slat"), {...common, yLabel: "ms", padRight: 60,
+      vFmt: x => fmt(x, 2) + " ms",
+      series: [{name: "write latency", color: C[0], values: t.storage_write_ms}]});
+    drawLines(document.getElementById("c-dirty"), {...common, yLabel: "GB", padRight: 60,
+      vFmt: x => fmt(x, 1) + " GB",
+      series: [{name: "backlog", color: C[1], values: t.storage_dirty_gb}]});
+    drawLines(document.getElementById("c-node"), {...common, yLabel: "0–1", yMax: 1,
+      padRight: 60, vFmt: x => fmt(x, 3),
+      series: [{name: "cpu", color: C[0], values: t.node_cpu},
+               {name: "memory", color: C[1], values: t.node_mem},
+               {name: "io", color: C[2], values: t.node_io}]});
+  }];
+}
+
+/* --- tab 5: diagnosis ----------------------------------------------------- */
+const SIG_ROWS = [
+  ["iteration_time", "Timestep duration", 0],
+  ["rank_spread", "Rank spread", 1],
+  ["compute", "Compute time", 1],
+  ["halo", "Halo exchange time", 1],
+  ["utilisation", "GPU utilisation", 0],
+  ["occupancy", "SM occupancy", 0],
+  ["power", "Board power", 0],
+  ["rack_thermal_drift", "One rack drifting thermally", 1],
+  ["throttled", "Throttling", 1],
+  ["throttle_reason", "Throttle reason", 1],
+  ["link_down", "Uplink down", 1],
+  ["link_errors", "Link errors / drops", 1],
+  ["storage_latency", "Storage write latency", 1],
+  ["node_io", "Node io pressure", 1],
+];
+
+function sigCell(v) {
+  if (v === undefined || v === null || v === "") return `<span class="mv flat">&mdash;</span>`;
+  if (v === "up") return `<span class="mv up">&#9650; up</span>`;
+  if (v === "down") return `<span class="mv down">&#9660; down</span>`;
+  if (v === "flat") return `<span class="mv flat">&mdash;</span>`;
+  if (v === "NONE") return `<span class="mv flat">none</span>`;
+  return `<span class="mv up">${v}</span>`;
+}
+
+function tabDiagnosis() {
+  const r = run(), d = r.summary.diagnosis, s = scen(state.scenario);
+  const cols = DATA.scenarios.map(sc => ({sc, r: DATA.runs[`${sc.name}__${state.mesh}`]}))
+                             .filter(x => x.r);
+  const correct = s.fault === (d.verdict === "HARDWARE_FAULT");
+
+  document.getElementById("view").innerHTML = `
+    <div class="card">
+      <h2>${s.label} &mdash; verdict ${verdictBadge(d.verdict)}</h2>
+      <p class="sub">Ground truth: <b>${s.fault ? "hardware fault" : "not a fault"}</b> at the
+        ${s.tier} tier. The classifier ${correct ? "agrees" : "<b>disagrees</b>"}. It reads
+        telemetry only; it is never shown the scenario.</p>
+      ${tiles([
+        {k: "Verdict", v: d.verdict.replace("_", " ").toLowerCase(), u: ""},
+        {k: "Tier", v: d.tier, u: ""},
+        {k: "Confidence", v: d.confidence, u: ""},
+        {k: "Job impact", v: (d.slowdown_pct > 0 ? "+" : "") + fmt(d.slowdown_pct, 1), u: "%"},
+        {k: "Localised to", v: Object.values(d.localisation).flat().join(", ") || "&mdash;", u: ""},
+      ])}
+      <h3 style="margin-top:16px">Evidence</h3>
+      <ul class="ev">${d.evidence.map(e => `<li>${e}</li>`).join("")}</ul>
+      <h3 style="margin-top:14px">Channels that carried the decision</h3>
+      <div class="chips">${[...new Set(d.discriminators)].map(c => `<code class="chip">${c}</code>`).join("")}</div>
+    </div>
+
+    <div class="card">
+      <h2>Signature matrix &mdash; ${state.mesh} mesh</h2>
+      <p class="sub">Every cell is derived from this dashboard's own telemetry, comparing each
+        run's early window against its late one. Read down a column for what a scenario does;
+        read across a row for which channel separates scenarios.</p>
+      <div class="scroll"><table class="sig">
+        <thead><tr><th>Channel</th>${cols.map(c =>
+          `<th>${c.sc.name}</th>`).join("")}</tr></thead>
+        <tbody>${SIG_ROWS.map(([key, label, isKey]) => `<tr class="${isKey ? "key" : ""}">
+          <td>${label}</td>${cols.map(c => `<td>${sigCell(c.r.signature[key])}</td>`).join("")}
+        </tr>`).join("")}</tbody>
+      </table></div>
+      <p class="note"><b>The highlighted rows are the discriminators, and most of them work by
+        staying still.</b> Every scenario except <code>healthy</code> slows the job down, so the
+        top row separates nothing. What separates them is the pattern of what did
+        <em>not</em> move: <code>phase_change</code> is the only slowdown with a tight rank
+        spread and clean device counters; <code>network_domain</code> is the only one where
+        compute time is untouched; <code>straggler</code> and <code>gpu_degradation</code> are
+        identical everywhere except <code>throttle_reason</code>.</p>
+    </div>
+
+    <div class="card">
+      <h2>Straggler attribution</h2>
+      <p class="sub">Ranked by excess busy time over the fleet median, late in the run.
+        <b>Wasted GPU-seconds</b> is that excess multiplied by the 127 peers that had to wait.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Rank</th><th>GPU</th><th>Mean busy</th><th>Excess</th>
+          <th>Mean wait</th><th>Steps as straggler</th><th>Wasted GPU-s</th></tr></thead>
+        <tbody>${r.attribution.map((a, i) => `<tr>
+          <td class="${i === 0 ? "hl" : ""}">rank ${a.rank_id}</td>
+          <td><code>${a.gpu_id}</code></td>
+          <td>${fmt(a.mean_busy_s * 1e3, 1)} ms</td>
+          <td>${fmt(a.mean_excess_s * 1e3, 2)} ms</td>
+          <td>${fmt(a.mean_wait_s * 1e3, 2)} ms</td>
+          <td>${a.straggler_iterations}</td>
+          <td>${fmt(a.wasted_gpu_s, 0)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      <p class="note">The top row has the <b>largest excess and the smallest wait</b>. That
+        inversion is the whole trick: the rank causing the problem is the only one that never
+        waits, and every rank that looks idle is a victim.</p>
+    </div>`;
+  redraws = [];
+}
+
+/* --- driver --------------------------------------------------------------- */
+function render() {
+  writeHash();
+  renderChrome();
+  [tabOverview, tabTimeline, tabRanks, tabMesh, tabTelemetry, tabDiagnosis][state.tab]();
+  requestAnimationFrame(() => redraws.forEach(fn => fn()));
+}
+
+let rt;
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 140); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change",
+  () => requestAnimationFrame(() => redraws.forEach(f => f())));
+new MutationObserver(() => requestAnimationFrame(() => redraws.forEach(f => f())))
+  .observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+
+addEventListener("hashchange", () => { readHash(); render(); });
+
+readHash();
+render();
+</script>

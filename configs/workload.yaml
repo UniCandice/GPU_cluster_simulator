@@ -1,0 +1,33 @@
+# The distributed CFD job.
+#
+# Deliberately NOT a physics model. It is a bulk-synchronous iterative solver:
+# each outer timestep exchanges halos, advances the local subdomain, and closes
+# with a global reduction. Every `output_interval` timesteps the fields are
+# written out. The CFD framing exists to motivate domain decomposition, which is
+# the actual subject of the simulator.
+#
+#   DATA_LOAD (once)   mesh read + decomposition        -> storage read, node pressure
+#   per timestep:
+#     HALO_EXCHANGE    6-face neighbour exchange        -> routed flows, link queueing
+#     COMPUTE          local kernels over owned cells
+#     ALLREDUCE        residual + CFL timestep          -> the synchronisation barrier
+#     [OUTPUT]         field write every N timesteps    -> storage queue, node pressure
+#
+# The barrier relationship holds by construction:
+#     iteration_time = max(rank arrival times) + collective_comm_time + output_time
+
+name: cfd-lid-driven-cavity
+iterations: 1000
+output_interval: 100
+
+# Values reduced in the global collective each timestep (residual norms per
+# field plus the CFL-limited timestep). Tiny, so ALLREDUCE is latency-dominated
+# and therefore a clean proxy for fabric health.
+allreduce_values: 8
+
+# One rank per GPU, mapped so that the longest process-grid axis lies inside a
+# node. With an 8 x 4 x 4 grid on 8-GPU nodes this puts the +/-x exchanges on
+# NVLink, the +/-y exchanges inside the rack, and the +/-z exchanges across
+# racks -- which is why a rack-level fabric fault hits exactly the +/-z traffic
+# and leaves intra-node exchanges untouched.
+placement: packed
