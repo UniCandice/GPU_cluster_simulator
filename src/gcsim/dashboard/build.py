@@ -437,7 +437,14 @@ def build_payload(runs_dir: Path | str) -> dict[str, Any]:
     }
 
 
-def build_dashboard(runs_dir: Path | str, out_path: Path | str | None = None) -> Path:
+def build_dashboard(runs_dir: Path | str,
+                    out_path: Path | str | None = None) -> tuple[Path, str]:
+    """Render the dashboard, returning the path and the `Generated` stamp.
+
+    The stamp is returned rather than discarded so a caller can print it: the
+    output path never changes between builds, so it is the only thing that
+    tells you at a glance whether the page you are looking at is this build.
+    """
     payload = build_payload(runs_dir)
     out = Path(out_path) if out_path else DEFAULT_OUT
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -448,4 +455,4 @@ def build_dashboard(runs_dir: Path | str, out_path: Path | str | None = None) ->
     if marker not in html:
         raise ValueError(f"template {TEMPLATE} is missing the data marker")
     out.write_text(html.replace(marker, blob), encoding="utf-8")
-    return out
+    return out, payload["meta"]["generated"]

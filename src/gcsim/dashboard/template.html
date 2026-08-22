@@ -1,4 +1,9 @@
 <meta charset="utf-8">
+<!-- This file is rebuilt in place at the same path every time, and it is large.
+     Without this, a browser re-serves the cached copy on a plain reload and a
+     fresh build looks identical to the old one. The `Generated` stamp in the
+     header is the tiebreaker if you ever need to check which build you have. -->
+<meta http-equiv="Cache-Control" content="no-store">
 <title>GPU Cluster Simulator</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -386,13 +391,25 @@ function drawStack(host, spec) {
   const totals = Array.from({length: n}, (_, i) =>
     spec.series.reduce((a, s) => a + s.values[i], 0));
   const f = frame(host, {...spec, dataMax: Math.max(...totals)});
+
+  //  The band separator is a stroke in the surface colour, so it ERASES any
+  //  band narrower than itself. A field output occupying one timestep in 1000
+  //  is ~2.7px wide here; a 2px stroke centred on that outline leaves under a
+  //  pixel of fill and the band disappears -- while the axis, scaled from the
+  //  totals, still reserves room for a peak nothing draws. Two guards: clamp
+  //  the separator to the point spacing, and paint fill over stroke so a band
+  //  can never be erased by its own outline. Separation survives because the
+  //  outer half of each stroke still lands on the band drawn beneath it.
+  const sep = Math.min(2, f.iw / Math.max(n - 1, 1) * 0.6);
+
   const acc = new Array(n).fill(0);
   spec.series.forEach(s => {
     const top = acc.map((a, i) => a + s.values[i]);
     const up = top.map((v, i) => `${i ? "L" : "M"}${f.X(i).toFixed(1)},${f.Y(v).toFixed(1)}`).join("");
     const dn = acc.map((v, i) => `L${f.X(n - 1 - i).toFixed(1)},${f.Y(acc[n - 1 - i]).toFixed(1)}`).join("");
     mk("path", {d: up + dn + "Z", fill: s.color, opacity: .92,
-                stroke: tok("--surface"), "stroke-width": 2}, f.svg);
+                stroke: tok("--surface"), "stroke-width": sep,
+                "paint-order": "stroke fill"}, f.svg);
     for (let i = 0; i < n; i++) acc[i] = top[i];
   });
   attachHover(f, host, {...spec, series: [...spec.series].reverse()});
