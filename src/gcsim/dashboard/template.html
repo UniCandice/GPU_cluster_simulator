@@ -746,7 +746,7 @@ function tabTimeline() {
    matrix routinely has both: the straggler run has a strong regime change in
    time AND one deviant rank, and comparing the two variances alone would report
    only the larger of them and miss the rank entirely. */
-function describeStructure(matrix, gpuIds, gpusPerRack) {
+function describeStructure(matrix, gpuIds, gpusPerRack, metric) {
   const rows = matrix.length, cols = matrix[0].length;
   const rowMean = new Array(rows).fill(0), colMean = new Array(cols).fill(0);
   for (let y = 0; y < rows; y++) {
@@ -788,9 +788,15 @@ function describeStructure(matrix, gpuIds, gpusPerRack) {
   if (sd(colMean) > 2 * sd(rowMean)) {
     return {kind: "time", html:
       "<b>Time-aligned.</b> Every rank moves together &mdash; the bands run the full height " +
-      "of the plot. That is the job doing something to itself, usually field output or a " +
-      "barrier everyone hits at once. It is present in the healthy baseline too. No fault " +
-      "attached to one GPU, node or rack can produce this pattern."};
+      "of the plot. " + (metric === "wait"
+        ? "On <b>barrier wait</b> that is weak evidence by itself. The barrier broadcasts one " +
+          "rank's stall to all 127 peers, so a single rank going slow in bursts paints the same " +
+          "full-height bands that a job-wide phase does. Look <i>inside</i> a band for the dark " +
+          "line: if there is one, the cause is attached to that rank, not to the job &mdash; and " +
+          "if it moves from band to band, the fault is roaming."
+        : "That is the job doing something to itself, usually field output or a barrier everyone " +
+          "hits at once. It is present in the healthy baseline too. On this channel no fault " +
+          "attached to one GPU, node or rack can produce it.")};
   }
   return {kind: "flat", html:
     "<b>Uniform.</b> No structure in either direction on this channel. If a fault is present " +
@@ -821,7 +827,7 @@ function tabRanks() {
   };
   const m = metrics[state.rankMetric];
   const gpr = meta.gpus_per_rack;
-  const structure = describeStructure(rk[state.rankMetric], rk.gpu_ids, gpr);
+  const structure = describeStructure(rk[state.rankMetric], rk.gpu_ids, gpr, state.rankMetric);
 
   document.getElementById("view").innerHTML = `
     <div class="card">
@@ -1022,13 +1028,18 @@ function tabTelemetry() {
       </div>
       <p class="note">Counter conservation: bytes recorded on a leaf's uplink ports equal the
         halo traffic whose route genuinely left that rack. Switch telemetry here is
-        <b>derived from routed flows</b>, not bookkeeping invented alongside them.</p>
+        <b>derived from routed flows</b>, not bookkeeping invented alongside them.
+        The two pairs are not meant to agree. <b>Uplink</b> counters see only traffic that
+        crossed a rack boundary; <b>downlink</b> counters see everything the leaf exchanged
+        with its own nodes &mdash; intra-rack and cross-rack alike. Downlink is therefore the
+        larger figure, and the gap between them is the intra-rack halo that never reached a
+        spine. Traffic between GPUs inside one node stays on NVLink and appears in neither.</p>
       <div class="scroll" style="margin-top:10px"><table>
         <thead><tr><th>Domain</th><th>Uplink tx</th><th>Uplink rx</th>
-          <th>Downlink rx</th><th>Active uplinks</th></tr></thead>
+          <th>Downlink rx</th><th>Downlink tx</th><th>Active uplinks</th></tr></thead>
         <tbody>${fb.conservation.map(c => `<tr><td class="hl">${c.domain_id}</td>
           <td>${fmt(c.uplink_tx_gb, 1)} GB</td><td>${fmt(c.uplink_rx_gb, 1)} GB</td>
-          <td>${fmt(c.downlink_rx_gb, 1)} GB</td>
+          <td>${fmt(c.downlink_rx_gb, 1)} GB</td><td>${fmt(c.downlink_tx_gb, 1)} GB</td>
           <td>${c.active_uplinks}</td></tr>`).join("")}</tbody></table></div>
     </div>
 
@@ -1174,7 +1185,16 @@ function tabDiagnosis() {
       </table></div>
       <p class="note">The top row has the <b>largest excess and the smallest wait</b>. That
         inversion is the whole trick: the rank causing the problem is the only one that never
-        waits, and every rank that looks idle is a victim.</p>
+        waits, and every rank that looks idle is a victim.
+        <b>Excess</b> alone resolves a <b>persistent</b> fault cleanly: on
+        <code>gpu_degradation</code> the top row stands an order of magnitude clear of the
+        next. For the episodic <code>straggler</code> it does not. Each culprit is derated
+        only about a tenth of the run, so averaging over the whole run drags its excess down
+        to within touching distance of the fleet's fastest silicon &mdash; and the fastest
+        silicon is genuinely slow, just not faulty. Read <b>steps as straggler</b> instead:
+        it separates the cohort from everyone else exactly, which is why the diagnosis
+        localises by counting the timesteps a rank paced the barrier rather than by ranking
+        means.</p>
     </div>`;
   redraws = [];
 }

@@ -95,6 +95,13 @@ def main(argv: list[str] | None = None) -> int:
         print("\n  The culprit is the rank with the LARGEST excess and the SMALLEST wait.")
         print("  Every other rank looks idle -- reading the wait column naively blames")
         print("  the 127 victims instead of the one cause.")
+        print("\n  Note how weakly EXCESS resolves it here. This scenario is episodic: a")
+        print("  small cohort carries the fault, but each member is derated only about a")
+        print("  tenth of the run, so a whole-run average drags its excess down to within")
+        print("  touching distance of the fleet's fastest silicon. The steps-as-straggler")
+        print("  column separates them exactly, which is why the diagnosis localises by")
+        print("  counting timesteps. Compare gpu_degradation, where the fault never lets")
+        print("  go and the top row stands an order of magnitude clear on excess alone.")
 
         print("\n  counter conservation (leaf uplink bytes vs traffic that left the rack):")
         print(counter_conservation(ref.frames).to_string(index=False, float_format=fmt))

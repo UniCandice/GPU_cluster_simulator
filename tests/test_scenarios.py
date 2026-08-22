@@ -7,6 +7,7 @@ Every test here reads only telemetry. None of them consults the scenario's
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,65 @@ def _gpu_window(gpu, job):
     t_early = job[job["iteration"] == EARLY]["timestamp"].iloc[0]
     t_late = job[job["iteration"] == LATE]["timestamp"].iloc[0]
     return gpu[gpu["timestamp"] < t_early], gpu[gpu["timestamp"] > t_late]
+
+
+# ---------------------------------------------------------------------------
+# Straggler episodes: reading the injected schedule back as ground truth
+# ---------------------------------------------------------------------------
+#
+# The episodic straggler plans its episodes up front and writes them into the
+# INJECTION_APPLIED payload. Tests read that schedule rather than inferring
+# episode windows from timings, so cause and effect stay separable: if a test
+# had to find the episodes by looking for slow timesteps, it could no longer
+# tell whether the slowdown landed where the injection said it would.
+
+def _episodes(run):
+    """The episode schedule, as the injector planned it."""
+    events = run.frames["events"]
+    fired = events[events["event_type"] == "INJECTION_APPLIED"]
+    return json.loads(fired.iloc[0]["payload"])["episodes"]
+
+
+def _episode_spans(run):
+    """Episodes as (gpu_id, t_start, t_end) in wall-clock seconds."""
+    stamp = run.frames["job_performance"].set_index("iteration")["timestamp"]
+    last = int(stamp.index.max())
+    return [(e["gpu_id"], float(stamp.loc[e["start"]]), float(stamp.loc[min(e["end"], last)]))
+            for e in _episodes(run)]
+
+
+def _episode_of(run, timestamps):
+    """Index of the episode covering each timestamp, or -1 outside every one."""
+    stamps = np.asarray(timestamps, dtype=float)
+    out = np.full(len(stamps), -1, dtype=int)
+    for k, (_, start, end) in enumerate(_episode_spans(run)):
+        out[(stamps >= start) & (stamps < end)] = k
+    return out
+
+
+def _split_by_episode(run, gpu):
+    """GPU telemetry split into (victim rows, peer rows in-episode, rows outside).
+
+    The victim changes from episode to episode, so "peer" is only meaningful
+    relative to whichever rank is being derated at that moment.
+    """
+    where = _episode_of(run, gpu["timestamp"].to_numpy())
+    spans = _episode_spans(run)
+    victim_id = np.array([spans[i][0] if i >= 0 else "" for i in where])
+    is_victim = (gpu["gpu_id"].to_numpy() == victim_id) & (where >= 0)
+    return gpu[is_victim], gpu[(where >= 0) & ~is_victim], gpu[where < 0]
+
+
+def _quiet_iterations(run):
+    """Timesteps after the first episode that no episode covers."""
+    job = run.frames["job_performance"]
+    iteration = job["iteration"].to_numpy()
+    covered = np.zeros(len(job), dtype=bool)
+    episodes = _episodes(run)
+    for e in episodes:
+        covered |= (iteration >= e["start"]) & (iteration < e["end"])
+    started = iteration >= min(e["start"] for e in episodes)
+    return job[~covered & started]
 
 
 # ---------------------------------------------------------------------------
@@ -115,29 +175,130 @@ def test_healthy_rank_spread_is_tight_but_not_zero(healthy):
 # straggler -- and the barrier-stall fingerprint
 # ---------------------------------------------------------------------------
 
-def test_straggler_widens_the_spread_and_slows_the_job(runs):
+def test_the_early_late_comparison_almost_misses_the_episodic_straggler(runs):
+    """The scenario's whole point, asserted as a negative.
+
+    Episodes run from the first timestep, so the early window is as contaminated
+    as the late one and the before/after comparison that every other scenario
+    leans on reports almost nothing: a couple of percent on iteration time and a
+    rank spread that barely moves. A detector built only on window deltas calls
+    this cluster healthy. The fault is real -- the next test measures it -- but
+    it is invisible to that particular question, which is why `diagnose` does
+    not ask it first.
+    """
     job = runs["straggler"].frames["job_performance"]
     early, late = _window(job)
-    assert late["iteration_time_s"].mean() > early["iteration_time_s"].mean() * 1.2
-    assert late["rank_spread_s"].mean() > early["rank_spread_s"].mean() * 4
+    assert late["iteration_time_s"].mean() < early["iteration_time_s"].mean() * 1.05
+    assert late["rank_spread_s"].mean() < early["rank_spread_s"].mean() * 1.5
 
 
-def test_the_culprit_is_the_one_rank_that_never_waits(runs):
-    """The inversion the whole diagnosis rests on.
+def test_but_the_cost_is_real_when_measured_against_the_episodes(runs, healthy):
+    """...and here is everything the window comparison hid.
+
+    Split the same run by whether an episode was actually running and the fault
+    is unmistakable. The information was never missing; it was averaged away.
+    """
+    run = runs["straggler"]
+    job = run.frames["job_performance"]
+    iteration = job["iteration"].to_numpy()
+    covered = np.zeros(len(job), dtype=bool)
+    for e in _episodes(run):
+        covered |= (iteration >= e["start"]) & (iteration < e["end"])
+
+    inside, outside = job[covered], job[~covered]
+    assert inside["iteration_time_s"].mean() > outside["iteration_time_s"].mean() * 1.20
+    assert inside["rank_spread_s"].mean() > outside["rank_spread_s"].mean() * 3.0
+
+    #  ...and the job as a whole really did pay for it.
+    healthy_job = healthy.frames["job_performance"]
+    assert (job["iteration_time_s"].sum()
+            > healthy_job["iteration_time_s"].sum() * 1.05)
+
+
+def test_between_episodes_the_cluster_returns_to_baseline(runs, healthy):
+    """Every episode releases the GPU completely -- no residue, no drift.
+
+    This is the property that separates an intermittent fault from a degrading
+    one. A quiet timestep in the straggler run is not merely *close* to healthy,
+    it is the same number: the derate goes back to exactly 1.0, and nothing else
+    was ever touched, so the whole downstream pipeline recomputes identically.
+    An assertion this tight is only honest because the simulator is
+    deterministic under a fixed seed -- and it would fail loudly if an episode
+    ever restored to 0.999 instead of 1.0.
+    """
+    quiet = _quiet_iterations(runs["straggler"])
+    healthy_job = healthy.frames["job_performance"]
+    same = healthy_job[healthy_job["iteration"].isin(quiet["iteration"])]
+
+    assert len(quiet) > 100            # there really is a quiet majority to check
+    assert quiet["iteration_time_s"].mean() == pytest.approx(
+        same["iteration_time_s"].mean(), rel=1e-9)
+    assert quiet["rank_spread_s"].mean() == pytest.approx(
+        same["rank_spread_s"].mean(), rel=1e-9)
+
+
+def test_the_culprit_is_the_rank_the_injector_actually_derated(runs):
+    """The inversion the whole diagnosis rests on, checked against ground truth.
 
     A slow rank has ~zero barrier slack while all 127 peers accumulate wait. The
-    culprit looks busy; every victim looks idle. Reading the wait column
-    naively would blame the wrong 127 GPUs.
-    """
-    rank = runs["straggler"].frames["rank_performance"]
-    late = rank[rank["iteration"] > LATE]
-    busy = late["compute_time_s"] + late["halo_wait_s"]
-    culprit = int(busy.groupby(late["rank_id"]).mean().idxmax())
+    culprit looks busy; every victim looks idle. Reading the wait column naively
+    would blame the wrong 127 GPUs.
 
-    wait = late.groupby("rank_id")["allreduce_wait_s"].mean()
+    Stronger than the old form of this test: because the schedule is known, the
+    busiest rank inside an episode can be checked to be *the rank the injector
+    chose*, not merely some rank that happened to be slow.
+    """
+    run = runs["straggler"]
+    episode = max(_episodes(run), key=lambda e: e["end"] - e["start"])
+
+    rank = run.frames["rank_performance"]
+    window = rank[(rank["iteration"] >= episode["start"])
+                  & (rank["iteration"] < episode["end"])]
+    busy = window["compute_time_s"] + window["halo_wait_s"]
+    culprit = int(busy.groupby(window["rank_id"]).mean().idxmax())
+
+    assert window.loc[window["rank_id"] == culprit, "gpu_id"].iloc[0] == episode["gpu_id"]
+
+    wait = window.groupby("rank_id")["allreduce_wait_s"].mean()
     peers = wait.drop(index=culprit)
     assert wait[culprit] < peers.min() * 0.1
-    assert peers.min() > 0.03          # every peer really is stalled
+    assert peers.min() > 0.0           # every peer really is stalled
+
+
+def test_the_pacer_changes_hands_across_episodes(runs):
+    """A small cohort carries the fault, and the barrier passes between them.
+
+    This is what makes the episodic straggler a different object from
+    `gpu_degradation`, which is pinned to one device for the whole run: the
+    fault is localised, but never to only one rank and never continuously.
+    """
+    run = runs["straggler"]
+    victims = {e["gpu_id"] for e in _episodes(run)}
+    assert 1 < len(victims) <= 8          # a cohort, not one GPU and not the fleet
+
+    #  ...and the fleet-level consequence: over the late window the identity of
+    #  the slowest rank is not constant.
+    rank = run.frames["rank_performance"]
+    late = rank[rank["iteration"] > LATE].copy()
+    late["busy"] = late["compute_time_s"] + late["halo_wait_s"]
+    pacer = late.loc[late.groupby("iteration")["busy"].idxmax(), "rank_id"]
+    assert pacer.nunique() > 1
+
+
+def test_the_diagnosis_recovers_the_whole_cohort_from_telemetry(runs):
+    """The classifier finds every injected victim, and only those.
+
+    The strongest statement this suite makes about the episodic straggler: the
+    set of GPUs named in the diagnosis is *exactly* the set the injector chose,
+    recovered from timing telemetry with no access to the schedule. It works
+    because localisation counts the timesteps each rank paced the barrier rather
+    than ranking mean busy time -- a mean over the window is dominated by
+    ordinary silicon variation once a fault is only present a tenth of the time.
+    """
+    run = runs["straggler"]
+    injected = sorted({e["gpu_id"] for e in _episodes(run)})
+    diagnosed = sorted(run.summary["diagnosis"]["localisation"]["gpus"])
+    assert diagnosed == injected
 
 
 def test_straggler_leaves_no_fingerprint_on_any_device_counter(runs):
@@ -156,10 +317,8 @@ def test_straggler_leaves_no_fingerprint_on_any_device_counter(runs):
     #  The victim's occupancy is HIGHER than its peers', not lower: it is the
     #  only rank still doing a full timestep of work while everyone else waits.
     #  Nothing about the device is degraded, so there is nothing to see.
-    _, late = _gpu_window(gpu, run.frames["job_performance"])
-    victim = late[late["gpu_id"] == "r1n2g5"]["sm_occupancy_pct"].mean()
-    peers = late[late["gpu_id"] != "r1n2g5"]["sm_occupancy_pct"].mean()
-    assert victim > peers
+    victim, peers_in, _ = _split_by_episode(run, gpu)
+    assert victim["sm_occupancy_pct"].mean() > peers_in["sm_occupancy_pct"].mean()
 
 
 def test_barrier_stall_shows_as_high_utilisation_with_falling_occupancy(runs):
@@ -170,28 +329,30 @@ def test_barrier_stall_shows_as_high_utilisation_with_falling_occupancy(runs):
     utilisation and occupancy as the same signal could not show this.
     """
     run = runs["straggler"]
-    gpu, job = run.frames["telemetry_gpu"], run.frames["job_performance"]
-    early, late = _gpu_window(gpu, job)
-
-    peers_early = early[early["gpu_id"] != "r1n2g5"]
-    peers_late = late[late["gpu_id"] != "r1n2g5"]
+    gpu = run.frames["telemetry_gpu"]
+    victim, peers_in, outside = _split_by_episode(run, gpu)
 
     #  Utilisation barely moves: the spin kernel is still resident.
-    assert peers_early["utilization_pct"].mean() > 98.0
-    assert peers_late["utilization_pct"].mean() > 98.0
+    assert outside["utilization_pct"].mean() > 98.0
+    assert peers_in["utilization_pct"].mean() > 98.0
 
-    #  Everything that tracks real work collapses.
-    assert peers_late["sm_occupancy_pct"].mean() < peers_early["sm_occupancy_pct"].mean()
-    assert peers_late["power_w"].mean() < peers_early["power_w"].mean() * 0.92
-    assert peers_late["temperature_c"].mean() < peers_early["temperature_c"].mean()
+    #  Everything that tracks real work collapses while an episode is running.
+    assert peers_in["sm_occupancy_pct"].mean() < outside["sm_occupancy_pct"].mean() * 0.9
+    assert peers_in["power_w"].mean() < outside["power_w"].mean() * 0.95
 
-    #  ...while the culprit, the only rank still doing a full timestep of work,
-    #  is the one GPU in the cluster that gets HOTTER. Exactly backwards from
-    #  where a temperature-led search would look.
-    victim_early = early[early["gpu_id"] == "r1n2g5"]["temperature_c"].mean()
-    victim_late = late[late["gpu_id"] == "r1n2g5"]["temperature_c"].mean()
-    assert victim_late > victim_early
-    assert victim_late > peers_late["temperature_c"].mean()
+    #  Temperature is deliberately NOT compared in-episode against out-of-episode.
+    #  A die has thermal mass: it integrates over a window considerably longer
+    #  than one episode, so the two populations come out within a few tenths of
+    #  a degree of each other and the sign of the difference is not meaningful.
+    #  That is a real property of the channel, not a gap in the model -- it is
+    #  why an intermittent fault is close to invisible to thermal monitoring.
+    #
+    #  The comparison that does survive is spatial rather than temporal: at the
+    #  same instant, the culprit is the only rank still doing a full timestep of
+    #  work, so it is HOTTER than the ranks waiting on it. Exactly backwards
+    #  from where a temperature-led search would look.
+    assert victim["temperature_c"].mean() > peers_in["temperature_c"].mean()
+    assert victim["sm_occupancy_pct"].mean() > peers_in["sm_occupancy_pct"].mean()
 
 
 def test_straggler_amplification_is_set_by_the_barrier_not_the_derate(runs, healthy):
@@ -203,18 +364,25 @@ def test_straggler_amplification_is_set_by_the_barrier_not_the_derate(runs, heal
     the pace, so the job loses less than the victim does. Getting this wrong
     overstates the cost of every straggler in the fleet.
     """
+    #  Measured inside one episode rather than over the late window: averaging
+    #  across quiet timesteps would mix a derated victim with a healthy one and
+    #  understate both sides of the comparison.
+    run = runs["straggler"]
+    episode = max(_episodes(run), key=lambda e: e["end"] - e["start"])
+    lo, hi = episode["start"], episode["end"]
+
     def busy(frames):
         r = frames["rank_performance"]
-        r = r[r["iteration"] > LATE]
+        r = r[(r["iteration"] >= lo) & (r["iteration"] < hi)]
         return (r["compute_time_s"] + r["halo_wait_s"]).groupby(r["rank_id"]).mean()
 
     def job_time(frames):
         j = frames["job_performance"]
-        return j[j["iteration"] > LATE]["iteration_time_s"].mean()
+        return j[(j["iteration"] >= lo) & (j["iteration"] < hi)]["iteration_time_s"].mean()
 
     healthy_busy = busy(healthy.frames)
-    slow_busy = busy(runs["straggler"].frames)
-    delta_job = job_time(runs["straggler"].frames) - job_time(healthy.frames)
+    slow_busy = busy(run.frames)
+    delta_job = job_time(run.frames) - job_time(healthy.frames)
 
     #  The barrier simply moved from the old pacer to the victim.
     assert delta_job == pytest.approx(slow_busy.max() - healthy_busy.max(), rel=0.02)
@@ -324,19 +492,33 @@ def test_throttle_events_appear_in_the_trace(runs):
 # gpu_degradation -- the hard discrimination
 # ---------------------------------------------------------------------------
 
-def test_degradation_and_straggler_are_indistinguishable_on_job_timing(runs):
-    """Two different faults, the same throughput and spread signature.
+def test_degradation_is_persistent_where_the_straggler_is_transient(runs):
+    """The discriminator that intermittency adds.
 
-    If the simulator only produced timing data, these two would be one scenario.
+    While the straggler was a permanent derate pinned to one GPU, these two
+    scenarios produced near-identical throughput and spread and only device
+    counters could separate them. An episodic straggler adds a second,
+    purely temporal discriminator that needs no device counter at all:
+    `gpu_degradation` owns the barrier in every single timestep, because the
+    fault never goes away, while the episodic straggler keeps handing it back.
+
+    Note what this does NOT say. Neither run throttles on demand, and both look
+    like "a slow rank" to any detector that only reports a fleet average -- the
+    separation lives in *when*, not in *how much*.
     """
-    a = runs["straggler"].frames["job_performance"]
-    b = runs["gpu_degradation"].frames["job_performance"]
-    a, b = a[a["iteration"] > LATE], b[b["iteration"] > LATE]
+    def pacer(frames):
+        r = frames["rank_performance"]
+        r = r[r["iteration"] > LATE].copy()
+        r["busy"] = r["compute_time_s"] + r["halo_wait_s"]
+        return r.loc[r.groupby("iteration")["busy"].idxmax(), "rank_id"]
 
-    assert b["iteration_time_s"].mean() == pytest.approx(
-        a["iteration_time_s"].mean(), rel=0.05)
-    assert b["rank_spread_s"].mean() == pytest.approx(a["rank_spread_s"].mean(), rel=0.10)
-    assert b["straggler_count"].mean() == pytest.approx(a["straggler_count"].mean(), abs=1)
+    degraded, episodic = pacer(runs["gpu_degradation"].frames), pacer(runs["straggler"].frames)
+
+    #  One device owns the barrier for essentially the whole late window...
+    assert degraded.nunique() == 1
+    #  ...where the episodic straggler's pacer keeps changing.
+    assert episodic.nunique() > degraded.nunique()
+    assert episodic.value_counts(normalize=True).iloc[0] < 1.0
 
 
 def test_only_throttle_reason_and_occupancy_separate_them(runs):
@@ -357,15 +539,14 @@ def test_only_throttle_reason_and_occupancy_separate_them(runs):
     #  while their peers wait, so duty cycle cancels out and what is left is the
     #  device itself: the degraded GPU's SMs are stalled on memory, so it retires
     #  less per resident cycle than the straggler's perfectly healthy SMs do.
-    def pacing_occupancy(gpu_frame, job_frame, gpu_id):
-        t_late = job_frame[job_frame["iteration"] == LATE]["timestamp"].iloc[0]
-        late = gpu_frame[gpu_frame["timestamp"] > t_late]
-        return late[late["gpu_id"] == gpu_id]["sm_occupancy_pct"].mean()
+    #  The straggler's pacer has to be taken per-episode now, since outside an
+    #  episode it is not pacing anything.
+    t_late = runs["gpu_degradation"].frames["job_performance"]
+    t_late = t_late[t_late["iteration"] == LATE]["timestamp"].iloc[0]
+    deg_late = deg[deg["timestamp"] > t_late]
+    deg_victim = deg_late[deg_late["gpu_id"] == "r3n1g2"]["sm_occupancy_pct"].mean()
 
-    deg_victim = pacing_occupancy(deg, runs["gpu_degradation"].frames["job_performance"],
-                                  "r3n1g2")
-    strag_victim = pacing_occupancy(strag, runs["straggler"].frames["job_performance"],
-                                    "r1n2g5")
+    strag_victim = _split_by_episode(runs["straggler"], strag)[0]["sm_occupancy_pct"].mean()
     assert deg_victim < strag_victim * 0.95
     assert deg["clock_mhz"].min() < strag["clock_mhz"].min()
 

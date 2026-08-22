@@ -74,20 +74,37 @@ def test_silicon_variation_is_identical_across_scenarios(bundle):
 def test_healthy_and_faulted_runs_agree_before_the_injection(bundle):
     """Nothing diverges until the injection actually fires.
 
-    The straggler is injected at timestep 200. Every timestep before it must be
-    identical to the healthy run, to the last bit.
+    Every timestep before the injection must be identical to the healthy run, to
+    the last bit.
+
+    Uses `gpu_degradation` rather than `straggler`, because the straggler's
+    episodes now begin at timestep 1 precisely so that it has no clean baseline
+    -- which makes it the one scenario that cannot answer this question. Not
+    `thermal` either: on the coarse mesh used here the dies never reach the
+    slowdown threshold, so a cooling failure costs no wall time at all and the
+    divergence half of this test would be vacuous. `gpu_degradation` moves
+    compute time directly, on any mesh.
+
+    The injection timestep is read from config so this cannot silently drift out
+    of date again when a scenario is retimed.
     """
+    cfg = bundle.build("gpu_degradation", mesh=FAST_MESH, seed=42)
+    fires_at = min(i.at_iteration for i in cfg.scenario.injections)
+
     healthy = run_scenario("healthy", mesh=FAST_MESH, seed=42, bundle=bundle, out_dir=None)
-    faulted = run_scenario("straggler", mesh=FAST_MESH, seed=42, bundle=bundle, out_dir=None)
+    faulted = run_scenario("gpu_degradation", mesh=FAST_MESH, seed=42, bundle=bundle, out_dir=None)
 
     h = healthy.frames["job_performance"]
     f = faulted.frames["job_performance"]
-    before = h["iteration"] < 200
+    before = h["iteration"] < fires_at
 
+    assert before.sum() > 10
     assert np.array_equal(h.loc[before, "iteration_time_s"].to_numpy(),
                           f.loc[before, "iteration_time_s"].to_numpy())
-    #  ...and they diverge immediately afterwards, so the test is not vacuous.
-    after = h["iteration"] > 250
+    #  ...and they diverge afterwards, so the test is not vacuous. Checked with
+    #  room to spare rather than on the very next timestep, so it stays true if
+    #  the injection is ever given a ramp.
+    after = h["iteration"] > fires_at + 150
     assert not np.array_equal(h.loc[after, "iteration_time_s"].to_numpy(),
                               f.loc[after, "iteration_time_s"].to_numpy())
 

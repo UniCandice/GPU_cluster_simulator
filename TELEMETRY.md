@@ -273,14 +273,41 @@ cell is derived from telemetry, comparing each run's early window against its la
 because throughput moves sharply. What separates it from a genuine fault is the *absence* of
 movement everywhere else: no throttling, no link errors, no queue growth, and a rank spread that
 never widens. Likewise, what separates a fabric fault from a compute fault is that compute durations
-are untouched; and what separates `gpu_degradation` from `straggler` — near-identical on spread,
-wait and throughput — is `throttle_reason` plus the occupancy of the pacing rank.
+are untouched; and what separates `gpu_degradation` from `straggler` — identical in every signature
+cell but one — is `throttle_reason` plus the occupancy of the pacing rank.
 
-A note on that last pair, because it is the sharpest case. Both victims run at the same reduced
-throughput. The difference is *why*: the straggler's SMs are healthy but time-sliced away by another
-process, so its occupancy is exactly what its subdomain predicts; the degraded GPU's SMs are stalled
-on memory, so it retires less per resident cycle. One mechanism, two observables — and the device
-itself reports the second one through the RAS governor.
+A note on that last pair, because it is the sharpest case. Compare the two victims *while each is
+pacing the barrier* and they run at a similar reduced throughput. The difference is *why*: the
+straggler's SMs are healthy but time-sliced away by another process, so its occupancy is exactly
+what its subdomain predicts; the degraded GPU's SMs are stalled on memory, so it retires less per
+resident cycle. One mechanism, two observables — and the device itself reports the second one
+through the RAS governor.
+
+There is now a second separator that needs no device counter at all: **persistence**.
+`gpu_degradation` is pinned to one GPU and owns the barrier in every remaining timestep.
+`straggler` is episodic — short bursts on one of a small cohort of GPUs, then a complete release —
+so the pacer keeps changing hands, and between episodes the cluster is bit-for-bit healthy. That
+also makes it the one fault here that a slow-sampling detector can miss entirely: average over a
+window longer than an episode and the whole signature dissolves into a slightly noisy baseline.
+
+That has a direct consequence for attribution. Ranking ranks by *mean* excess busy time finds a
+continuous fault easily, but an intermittent one is present for only ~10% of the window, which
+puts its mean within reach of the fleet's fastest healthy silicon — so the ranking promotes ranks
+that were never faulty. Counting the timesteps each rank was flagged `is_straggler` separates the
+cohort exactly, and that count is what `diagnose` localises on.
+
+It also has a consequence for *detection*, not just attribution. `straggler` episodes begin at the
+first timestep — a job inherits whatever was already running on its hosts — so there is no clean
+early window to compare a late one against. The before/after test that catches every other
+scenario reports +1.3% here and would wave the cluster through as healthy. Counting who paces the
+barrier needs no baseline, which is why `diagnose` runs that check *before* the slowdown gate. A
+healthy fleet's unluckiest rank paces about 0.5% of timesteps; a derated one sits near 10%, and
+`STRAGGLER_DUTY_FLOOR` lives in the gap.
+
+One channel genuinely cannot see this fault: **temperature**. A die integrates over a window
+considerably longer than a single episode, so in-episode and out-of-episode samples land within a
+few tenths of a degree of each other. What survives is the *spatial* comparison at one instant —
+the victim is hotter than the ranks waiting on it — not the temporal one.
 
 ---
 

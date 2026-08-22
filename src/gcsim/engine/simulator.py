@@ -74,7 +74,8 @@ class Simulator:
             allreduce_values=cfg.workload.allreduce_values,
         )
         self.injector = FaultInjector(cluster=self.cluster, workload=self.workload,
-                                      scenario=cfg.scenario)
+                                      scenario=cfg.scenario, seed=cfg.seed,
+                                      iterations=self.iterations)
         self.storage = StorageModel(spec=cc.storage)
 
         self._draw_silicon()

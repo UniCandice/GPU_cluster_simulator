@@ -39,6 +39,12 @@ COMPARE_FRACTION = 0.30
 SLOWDOWN_THRESHOLD = 0.03
 #: Rank spread beyond this multiple of the baseline counts as "widened".
 SPREAD_WIDEN_FACTOR = 2.0
+#: Fraction of the comparison window a rank must spend pacing the barrier before
+#: it counts as a culprit rather than as jitter. Silicon variation alone puts the
+#: unluckiest rank of a healthy fleet at about 0.5% of timesteps; a genuinely
+#: derated rank sits an order of magnitude above that even when the fault is
+#: only intermittent, so the gap this sits in is wide.
+STRAGGLER_DUTY_FLOOR = 0.02
 #: Every link corrupts the odd frame at its background bit error rate, so a
 #: healthy fabric still trickles errors. A detector without a floor above that
 #: trickle would report a fabric fault on every run.
@@ -206,33 +212,73 @@ def diagnose(frames: dict[str, pd.DataFrame]) -> Diagnosis:
         return Diagnosis("HARDWARE_FAULT", "rack", "high", slowdown * 100.0,
                          evidence, discriminators, localisation)
 
-    # --- no hardware channel moved. Is anything even wrong? ---------------
+    # --- rank-level: a few ranks pace the barrier, with no hardware signal --
+    #
+    #  Checked BEFORE the slowdown gate below, deliberately. That gate compares
+    #  an early window against a late one, which silently assumes the run began
+    #  healthy. An intermittent fault that was already running during the
+    #  baseline window shifts neither the mean nor the spread *between* windows
+    #  and would be waved through as nominal -- while the ranks it lands on are
+    #  still, plainly, pacing the barrier the whole time. Counting who paces
+    #  needs no baseline at all, which is the point: it is the one rank-level
+    #  check here that survives never having seen the cluster healthy.
+    rank = frames["rank_performance"]
+    late = rank[rank["iteration"] >= rank["iteration"].max() * (1.0 - COMPARE_FRACTION)]
+    gpu_of = late.drop_duplicates("rank_id").set_index("rank_id")["gpu_id"]
+    n_steps = max(int(late["iteration"].nunique()), 1)
+
+    #  Localise by COUNTING the timesteps each rank paced the barrier, not by
+    #  taking the largest mean. The two agree for a continuous fault, but for an
+    #  intermittent one only the count works: a rank derated for a tenth of the
+    #  window barely lifts its own average above ordinary silicon variation,
+    #  while the mean happily promotes whichever healthy rank is the fleet's
+    #  slowest. The count also finds every member of a cohort, where a single
+    #  argmax can only ever name one of them. The duty floor keeps ordinary
+    #  jitter out: a healthy fleet peaks near 0.5% of timesteps, a real culprit
+    #  sits an order of magnitude above that.
+    paced = late.groupby("rank_id")["is_straggler"].sum()
+    paced = paced[paced >= n_steps * STRAGGLER_DUTY_FLOOR].sort_values(ascending=False)
+
+    if len(paced) or (spread_widened and slowdown >= SLOWDOWN_THRESHOLD):
+        busy = late["compute_time_s"] + late["halo_wait_s"]
+        by_rank = busy.groupby(late["rank_id"]).mean()
+        culprits = [int(i) for i in paced.index] or [int(by_rank.idxmax())]
+        gpus = [str(gpu_of[c]) for c in culprits]
+        duty = [100.0 * float(paced[c]) / n_steps if c in paced.index else 0.0
+                for c in culprits]
+
+        discriminators += ["rank_spread_s", "allreduce_wait_s", "sm_occupancy_pct"]
+        evidence.append(impact)
+        evidence.append(f"rank spread {base_spread * 1e3:.1f} ms -> {late_spread * 1e3:.1f} ms")
+        if len(culprits) == 1:
+            evidence.append(f"rank {culprits[0]} ({gpus[0]}) is slowest and has near-zero wait, "
+                            f"while its peers accumulate wait")
+        else:
+            listed = ", ".join(f"{c} ({g}, {d:.0f}% of timesteps)"
+                               for c, g, d in zip(culprits, gpus, duty))
+            evidence.append(f"{len(culprits)} ranks pace the barrier at different times "
+                            f"-- {listed} -- each with near-zero wait while it does")
+            evidence.append("no rank paces it continuously, so the fault is intermittent: "
+                            "averaged over the whole run each culprit looks nearly healthy")
+        evidence.append("no throttling, no link errors -- the device reports itself healthy, "
+                        "so this is invisible to any single hardware counter")
+        #  GPUs only. The panel flattens every value it is given, so adding the
+        #  rank ids here would print them as bare numbers beside the device ids;
+        #  the evidence line above already pairs each rank with its GPU.
+        return Diagnosis("HARDWARE_FAULT", "rank", "medium", slowdown * 100.0,
+                         evidence, discriminators, {"gpus": gpus})
+
+    # --- no hardware channel moved, nobody is pacing. Is anything wrong? ---
     if slowdown < SLOWDOWN_THRESHOLD:
         return Diagnosis(
             verdict="NOMINAL", tier="none", confidence="high",
             slowdown_pct=slowdown * 100.0,
             evidence=[f"iteration time changed by {slowdown * 100:+.1f}%, within tolerance",
-                      "no throttling, no link errors, no queue growth, rank spread tight"],
+                      "no throttling, no link errors, no queue growth, rank spread tight",
+                      "no rank paces the barrier persistently"],
             discriminators=["iteration_time_s"],
         )
     evidence.append(impact)
-
-    # --- rank-level: spread widened with no hardware signal at all --------
-    if spread_widened:
-        rank = frames["rank_performance"]
-        late = rank[rank["iteration"] >= rank["iteration"].max() * (1.0 - COMPARE_FRACTION)]
-        busy = late["compute_time_s"] + late["halo_wait_s"]
-        by_rank = busy.groupby(late["rank_id"]).mean()
-        culprit = int(by_rank.idxmax())
-        gpu_id = late.loc[late["rank_id"] == culprit, "gpu_id"].iloc[0]
-        discriminators += ["rank_spread_s", "allreduce_wait_s", "sm_occupancy_pct"]
-        evidence.append(f"rank spread widened {base_spread * 1e3:.1f} ms -> {late_spread * 1e3:.1f} ms")
-        evidence.append(f"rank {culprit} ({gpu_id}) is slowest and has near-zero wait, "
-                        f"while its peers accumulate wait")
-        evidence.append("no throttling, no link errors -- the device reports itself healthy, "
-                        "so this is invisible to any single hardware counter")
-        return Diagnosis("HARDWARE_FAULT", "rank", "medium", slowdown * 100.0,
-                         evidence, discriminators, {"rank": culprit, "gpu_id": gpu_id})
 
     # --- everything device-side is clean, and the spread stayed tight -----
     storage = frames["telemetry_storage"].sort_values("timestamp")

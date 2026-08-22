@@ -24,19 +24,37 @@ scenarios:
     tier: rank
     label: Rank-level straggler
     description: >
-      A single GPU loses 25% of its SM throughput to a co-resident process left
-      behind by a previous job -- a stale context that time-slices the device.
+      A few hosts are left with stale processes from a previous job, and those
+      processes wake intermittently to steal SM time. Each episode takes 20-45%
+      of one victim's SM throughput for a few timesteps, then releases it
+      completely -- between episodes the cluster is bit-for-bit healthy.
+      The fault is localised to a small cohort but never continuous, so it is
+      real and attributable while still being easy to average away.
       This is deliberately chosen to be INVISIBLE in the clock: the GPU still
       boosts to its nominal clock and never sets a throttle bit; it is simply
-      slower. Its 127 peers are untouched, but the barrier means they all wait.
-      The peers report HIGH utilisation (spinning in the collective) with
-      FALLING occupancy, power and temperature; the victim is the only rank that
-      is genuinely busy, and the only one that runs hotter.
+      slower while the episode lasts. Its 127 peers are untouched, but the
+      barrier means they all wait. The peers report HIGH utilisation (spinning
+      in the collective) with FALLING occupancy, power and temperature; the
+      victim is the only rank genuinely busy, and the only one running hotter.
+      Intermittency is the hard part: any detector that samples slowly enough,
+      or averages over a long enough window, sees a slightly noisy healthy
+      cluster.
     injections:
-      - at_iteration: 200
-        type: gpu_throughput_derate
-        target: {rack: 1, node: 2, gpu: 5}
-        factor: 0.75
+      #  From the first timestep: there is no clean warm-up to compare against,
+      #  which is the realistic case -- a job inherits whatever was already
+      #  running on its hosts. It also means the early-vs-late comparison the
+      #  other scenarios lean on reports almost nothing here (+1% iteration
+      #  time, spread flat), and the fault is caught instead by counting which
+      #  ranks pace the barrier. See metrics.STRAGGLER_DUTY_FLOOR.
+      #
+      #  Cohort and schedule are both drawn from the run's own seed, so which
+      #  GPUs go bad is random but reproducible; see faults._plan_episodes.
+      - at_iteration: 1
+        type: gpu_throughput_episodes
+        victims: 3
+        episodes: 26
+        duration_iterations: [5, 18]
+        factor: [0.55, 0.80]
 
   network_domain:
     fault: true

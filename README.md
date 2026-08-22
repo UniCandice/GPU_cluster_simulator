@@ -156,7 +156,7 @@ synchronisation stall, and it only exists because the two are computed from diff
 | Id | Fault? | Physical perturbation |
 |---|---|---|
 | `healthy` | no | — |
-| `straggler` | **yes** (rank) | one GPU loses 25% of its SM throughput to a co-resident process |
+| `straggler` | **yes** (rank) | a cohort of 3 GPUs carries stale processes that wake intermittently from the first timestep, stealing 20–45% of a victim's SM throughput for a few timesteps at a time, then releasing it completely |
 | `network_domain` | **yes** (rack) | rack 2's uplink bundle fails to 1 of 8; the survivor carries a 2% frame error rate |
 | `thermal` | **yes** (rack) | rack 1 cooling degrades to 30% over 60 timesteps |
 | `gpu_degradation` | **yes** (GPU) | one GPU loses 15% memory bandwidth; RAS caps its clock at 90% |
@@ -185,10 +185,24 @@ job, so the top row separates nothing. What separates them is the pattern of wha
 - `phase_change` is the only slowdown with a **tight rank spread** and clean device counters. It
   costs ~10% throughput — enough to trip any threshold detector — and no hardware channel moves.
 - `network_domain` is the only one where **compute time is untouched**: the loss is on the wire.
-- `straggler` and `gpu_degradation` are the hard pair. They differ by 0.3 percentage points in
-  throughput and 1% in rank spread — indistinguishable on timing. The **only** separator is
-  `throttle_reason = RELIABILITY`, because a degraded device reports its own condition while a
-  stolen-SM straggler leaves no fingerprint on any counter at all.
+- `straggler` and `gpu_degradation` are the near pair: both present as "one slow rank, no fabric
+  signal, no thermal drift", and their signature columns above are identical except for one cell.
+  Two things separate them. The device counter — `throttle_reason = RELIABILITY`, because a
+  degraded device reports its own condition while a stolen-SM straggler leaves no fingerprint on
+  any counter at all. And **time**: `gpu_degradation` is pinned to one GPU for the rest of the
+  run, while `straggler` is episodic, owning the barrier in bursts and handing it back in between.
+- **`straggler` is the one fault with no clean baseline.** Its episodes start at the first
+  timestep, as a job inheriting stale processes from whatever ran before it would. So the
+  early-vs-late comparison every other scenario leans on reports **+1.3%** — nothing. Split the
+  same run by whether an episode was running and it is unmistakable: **+49%** on iteration time
+  and **11×** on rank spread, with the job 13.6% slower overall than healthy. The information was
+  never missing; it was averaged away.
+- **Intermittency also breaks mean-based attribution.** Each culprit is slow for ~10% of the run,
+  so its *mean* excess busy time falls to within touching distance of the fleet's fastest silicon
+  — which is genuinely slow, just not faulty. Ranking by the mean therefore promotes healthy
+  ranks. Counting the timesteps a rank actually **paced the barrier** separates them exactly, and
+  that is what the diagnosis localises on: it recovers all three injected GPUs, and only those,
+  from timing telemetry alone, on a run where the headline slowdown is 1.3%.
 
 ### Fault severity depends on the workload
 
@@ -281,8 +295,14 @@ Beyond the usual unit coverage, the tests that carry the argument:
   occupancy and power, and the culprit is the one GPU that runs *hotter*.
 - **Straggler amplification** — the job grows by the victim's excess over the *previous pacer*, not
   by its own slowdown. Getting this wrong overstates the cost of every straggler.
-- **Degradation vs straggler** — asserts they are indistinguishable on timing and separable only on
-  `throttle_reason` and occupancy.
+- **Degradation vs straggler** — asserts the persistent fault owns the barrier in *every* late
+  timestep while the episodic one keeps handing it back, and that `throttle_reason` and occupancy
+  still separate the two devices.
+- **Episodes restore exactly** — a timestep outside every straggler episode is not merely close to
+  the healthy run, it is bit-identical to it, so an episode leaves no residue and the fault cannot
+  quietly accumulate.
+- **The window comparison misses the straggler** — asserted as a negative, so the scenario cannot
+  quietly acquire a baseline later and make the count-based detector look unnecessary.
 - **`phase_change` is not a fault** — throughput drops while `throttled` is never set, link errors
   stay at the noise floor, and rank spread stays tight.
 
