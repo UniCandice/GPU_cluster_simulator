@@ -111,11 +111,13 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    from gcsim.dashboard.build import build_dashboard
+    from gcsim.dashboard.build import build_dashboard, open_in_browser
     paths, stamp = build_dashboard(runs_dir=args.runs or DEFAULT_RUNS_DIR, out_path=args.out)
     for path in paths:
         print(f"dashboard written to {path}  ({path.stat().st_size / 1e6:.1f} MB)")
     print(f"  Generated: {stamp}  -- hard-refresh the page if the header shows an older stamp")
+    if not args.no_open and open_in_browser(paths[-1]):
+        print(f"  opened {paths[-1].name}")
     return 0
 
 
@@ -155,6 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("dashboard", help="build the HTML dashboard from runs/")
     d.add_argument("--runs", type=Path, default=None)
     d.add_argument("--out", type=Path, default=None)
+    d.add_argument("--no-open", action="store_true",
+                   help="build but do not open the result in a browser")
     d.set_defaults(func=cmd_dashboard)
     return p
 

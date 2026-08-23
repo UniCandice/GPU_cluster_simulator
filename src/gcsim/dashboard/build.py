@@ -531,6 +531,24 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
     }
 
 
+def open_in_browser(path: Path) -> bool:
+    """Show a built dashboard, returning whether a browser actually took it.
+
+    Never fatal. A build that cannot reach a browser -- CI, a container, a
+    machine with no display -- is still a successful build, so a failure here
+    is reported to the caller and swallowed rather than raised.
+
+    Goes through `as_uri()` rather than passing the path as a string: this
+    project lives under paths with spaces in them, and a bare Windows path is
+    not a URL a browser will accept.
+    """
+    import webbrowser
+    try:
+        return webbrowser.open(Path(path).resolve().as_uri())
+    except Exception:
+        return False
+
+
 def build_dashboard(runs_dir: Path | str,
                     out_path: Path | str | None = None) -> tuple[list[Path], str]:
     """Render one dashboard per seed. Returns every path and the `Generated` stamp.
@@ -544,6 +562,10 @@ def build_dashboard(runs_dir: Path | str,
     before. With several, each gets `index_seed{N}.html` and the plain
     `index.html` is written again for the highest seed, so existing links and
     bookmarks keep resolving to something real rather than to a stale mixture.
+
+    The returned list always ends with that plain `index.html`, which is the
+    canonical entry point: the per-seed pages are reachable from its header.
+    Callers wanting to show one page should open the last.
 
     The stamp is returned rather than discarded so a caller can print it: the
     output paths never change between builds, so it is the only thing that tells

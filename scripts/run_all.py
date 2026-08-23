@@ -41,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--meshes", nargs="*", default=None)
     ap.add_argument("--scenarios", nargs="*", default=None)
     ap.add_argument("--no-dashboard", action="store_true")
+    ap.add_argument("--no-open", action="store_true",
+                    help="build the dashboard but do not open it in a browser")
     args = ap.parse_args(argv)
 
     pd.set_option("display.width", 220)
@@ -108,12 +110,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- 4. dashboard -------------------------------------------------------
     if not args.no_dashboard:
-        from gcsim.dashboard.build import build_dashboard
+        from gcsim.dashboard.build import build_dashboard, open_in_browser
         print("\nbuilding dashboard ...", end="", flush=True)
         paths, stamp = build_dashboard(runs_dir=args.runs, out_path=args.dashboard)
         print(f"  Generated: {stamp}")
         for path in paths:
             print(f"    {path}  ({path.stat().st_size / 1e6:.1f} MB)")
+
+        #  Open the canonical page -- the last one written. Failing to reach a
+        #  browser is not a failed run, so this only ever changes what is printed.
+        if not args.no_open:
+            if open_in_browser(paths[-1]):
+                print(f"\n  opened {paths[-1].name} in your browser")
+            else:
+                print("\n  no browser available; open the file above by hand")
 
     return 0
 

@@ -24,8 +24,13 @@ python scripts/run_all.py --seed 42
 
 `run_all.py` simulates all 6 scenarios on all 3 meshes (18 runs, ~30 s total), writes one Parquet
 directory per run under `runs/`, prints the comparison tables, and renders
-**`dashboard/index.html`** — a single self-contained file with no external dependencies. Open it by
-double-clicking.
+**`dashboard/index.html`** — a single self-contained file with no external dependencies, which
+**opens in your browser automatically** when the run finishes. Pass `--no-open` to suppress that
+(the file is still written), or just double-click it later.
+
+With runs from more than one seed on disk you get one page per seed —
+`dashboard/index_seed7.html`, `index_seed42.html` — plus `index.html` for the highest, and each
+header links to the others. A page never mixes seeds.
 
 Individual pieces:
 
