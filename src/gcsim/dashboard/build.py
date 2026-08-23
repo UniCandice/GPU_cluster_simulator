@@ -31,10 +31,13 @@ import numpy as np
 import pandas as pd
 
 from gcsim.config import load_config
-from gcsim.mesh import partition
+from gcsim.mesh import DIRECTION_NAMES, partition
 from gcsim.metrics import (STRAGGLER_DUTY_FLOOR, counter_conservation,
                            mesh_scaling_table, straggler_attribution)
+from gcsim.placement import KIND_NAMES, place
+from gcsim.routing import Router
 from gcsim.telemetry import read_run
+from gcsim.topology import build_cluster
 
 TIME_BINS = 96
 TEMPLATE = Path(__file__).parent / "template.html"
@@ -406,10 +409,47 @@ def build_payload(runs_dir: Path | str) -> dict[str, Any]:
 
     #  Partition geometry, so the process-grid map can show raggedness directly
     #  rather than asserting it in prose.
+    #
+    #  Link class per halo face comes from `placement`, which already computed it
+    #  when it mapped ranks onto GPUs -- deriving it again here by comparing rank
+    #  indices would let the picture drift away from the model it claims to show.
+    cc = bundle.cluster
+    cluster = build_cluster(cc)
+    router = Router(cluster)
+    ic = cc.interconnect
+    latency_us = {
+        "intranode": ic.intranode.latency_us,
+        "intra_domain": 2.0 * ic.nic.latency_us,
+        "cross_domain": 2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us,
+    }
+
     partitions = {}
     for name, mesh in bundle.meshes.items():
-        d = partition(mesh, bundle.cluster.n_gpus,
-                      preferred_first_extent=bundle.cluster.gpus_per_node)
+        d = partition(mesh, cc.n_gpus, preferred_first_extent=cc.gpus_per_node)
+        placement = place(cluster, d, router, strategy=bundle.workload.placement)
+
+        #  Averaged over ranks, not read off rank 0: on a ragged mesh the faces
+        #  differ between ranks and quoting one of them would misreport the rest.
+        face_cells = d.face_cells.mean(axis=0)
+        total_face = float(face_cells.sum()) or 1.0
+        faces = []
+        for i, direction in enumerate(DIRECTION_NAMES):
+            kind = KIND_NAMES[int(placement.neighbour_kind[0, i])]
+            faces.append({
+                "dir": direction,
+                "cells": round(float(face_cells[i]), 1),
+                "kind": kind,
+                "latency_us": round(latency_us[kind], 1),
+                "byte_share": round(100.0 * float(face_cells[i]) / total_face, 2),
+            })
+
+        #  Which rack each rack's +z face reaches. The decomposition is triply
+        #  periodic, so this closes into a ring -- which is the reason a fault on
+        #  one rack lands on a rack that is not its neighbour in the id order.
+        per_rack = cc.gpus_per_rack
+        z_ring = [int(d.neighbours[k * per_rack][5]) // per_rack
+                  for k in range(cc.n_gpus // per_rack)]
+
         partitions[name] = {
             "grid": list(d.grid),
             "dims": list(mesh.dims),
@@ -417,11 +457,15 @@ def build_payload(runs_dir: Path | str) -> dict[str, Any]:
             "coords": [[int(v) for v in row] for row in d.coords],
             "imbalance": round(d.imbalance, 5),
             "surface_to_volume": round(d.surface_to_volume, 5),
+            "extents": [int(v) for v in d.extents[0]],
+            "faces": faces,
+            "z_ring": z_ring,
+            "halo_mb_per_iter": round(
+                float(d.halo_bytes_per_iteration().sum(axis=1).mean()) / 1e6, 2),
             "label": mesh.label,
             "note": mesh.note,
         }
 
-    cc = bundle.cluster
     return {
         "meta": {
             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),

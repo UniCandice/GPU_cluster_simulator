@@ -912,6 +912,52 @@ function tabMesh() {
   p.coords.forEach((c, r) => { grid[c[1] + p.grid[1] * c[2]][c[0]] = p.cells[r]; });
   const mean = p.cells.reduce((a, b) => a + b, 0) / p.cells.length;
 
+  //  Faces arrive as six directions, but -x and +x always share a link class and
+  //  an area, so the table lists each axis once. Class and latency come from the
+  //  payload, which took them from `placement`, so this cannot describe a
+  //  topology the model is not actually running.
+  const KINDS = {intranode:    ["same node",    "NVLink"],
+                 intra_domain: ["same rack",    "via leaf"],
+                 cross_domain: ["across racks", "via spine"]};
+  const faceRows = [0, 2, 4].map(i => {
+    const f = p.faces[i], k = KINDS[f.kind];
+    const share = f.byte_share + p.faces[i + 1].byte_share;
+    return `<tr><td class="hl">&plusmn;${f.dir.slice(1)}</td>
+      <td>${fmt(f.cells, 0)}</td><td>${k[0]}</td><td><b>${k[1]}</b></td>
+      <td>~${fmt(f.latency_us, 0)} &micro;s</td><td>${fmt(share, 0)}%</td></tr>`;
+  }).join("");
+
+  //  The ring is drawn from the payload's z_ring -- the rack each rack's +z face
+  //  actually reaches -- rather than from an assumed 0-1-2-3 cycle, so it stays
+  //  honest if the grid or the placement ever changes shape.
+  //  Colour is used semantically (--critical for the degraded pair) and never to
+  //  encode a magnitude: the ramp reverses between themes, these tokens do not.
+  const ring = p.z_ring, nR = ring.length, DEGRADED = 2;
+  const at = ring.map((_, k) => {
+    const a = -Math.PI / 2 + k * 2 * Math.PI / nR;
+    return [110 + 60 * Math.cos(a), 92 + 60 * Math.sin(a)];
+  });
+  const ringSvg = `
+    <svg viewBox="0 0 220 205" width="100%" height="205" role="img"
+         aria-label="the four racks form a ring through their plus and minus z halo exchanges">
+      ${ring.map((to, from) => {
+        const bad = from === DEGRADED || to === DEGRADED;
+        return `<line x1="${at[from][0].toFixed(1)}" y1="${at[from][1].toFixed(1)}"
+          x2="${at[to][0].toFixed(1)}" y2="${at[to][1].toFixed(1)}"
+          stroke="${bad ? "var(--critical)" : "var(--axis)"}"
+          stroke-width="${bad ? 2.5 : 1.5}" stroke-dasharray="${bad ? "5 3" : "none"}"/>`;
+      }).join("")}
+      ${at.map(([x, y], k) => `
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="17"
+                fill="${k === DEGRADED ? "var(--critical)" : "var(--surface-2)"}"
+                stroke="var(--axis)" stroke-width="1"/>
+        <text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="middle"
+              font-size="12" font-weight="600" font-family="var(--font-data)"
+              fill="${k === DEGRADED ? "var(--surface)" : "var(--ink)"}">r${k}</text>`).join("")}
+      <text x="110" y="196" text-anchor="middle" font-size="10.5" fill="var(--muted)">
+        &plusmn;z exchanges. Dashed: the two a degraded r2 uplink slows.</text>
+    </svg>`;
+
   document.getElementById("view").innerHTML = `
     <div class="card">
       <h2>Mesh partitioning vs GPU utilisation</h2>
@@ -949,6 +995,36 @@ function tabMesh() {
         a zero baseline would flatten it to one shade.</p>
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Who each rank exchanges with</h2>
+      <p class="sub">Every rank has exactly six neighbours &mdash; the domain is triply periodic,
+        so nobody sits on a wall. Which <i>link</i> each of those six rides is decided by
+        placement, and it is the single most consequential thing about this layout.</p>
+      <div style="display:grid;grid-template-columns:minmax(300px,1.1fr) minmax(260px,.9fr);
+                  gap:26px;align-items:start;margin-top:12px">
+        <div class="scroll"><table>
+          <thead><tr><th>Face</th><th>Cells</th><th>Neighbour</th><th>Rides</th>
+            <th>Latency</th><th>Halo bytes</th></tr></thead>
+          <tbody>${faceRows}</tbody>
+        </table></div>
+        <div>${ringSvg}</div>
+      </div>
+      <p class="note">The subdomain is ${p.extents.join(" &times; ")} cells, so the
+        <b>&plusmn;x</b> faces are ${fmt(p.faces[0].cells / p.faces[2].cells, 0)}&times; the area
+        of the others &mdash; and those are the two that stay inside a node on NVLink. Half the
+        ${fmt(p.halo_mb_per_iter, 0)} MB each rank exchanges per timestep never leaves its host,
+        and only a quarter of it ever crosses a spine. Put the largest faces on the slowest link
+        instead and the same mesh on the same cluster runs materially slower; that is what the
+        <code>scatter</code> placement in <code>placement.py</code> exists to demonstrate.</p>
+      <p class="note"><b>The ring is why a rack fault surfaces somewhere unexpected.</b> The
+        &plusmn;z neighbours close into a cycle, so degrading one rack's uplink slows only the two
+        exchanges that touch it. In <code>network_domain</code> that is rack 2, which leaves racks
+        1, 2 and 3 each carrying a slowed face and rack 0 carrying none. Rack 0 then finishes
+        early and spends the whole run waiting &mdash; so the wait band appears on <b>r0</b>, two
+        racks away from the fault. At a barrier you see a fault in whoever is
+        <em>not</em> affected by it.</p>
     </div>
 
     <div class="card"><h2>The three meshes</h2><div class="scroll"><table>

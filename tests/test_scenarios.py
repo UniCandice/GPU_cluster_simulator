@@ -738,3 +738,63 @@ def test_the_pacing_row_does_not_fire_on_the_two_non_faults(runs):
         sig = _signature_row(runs[name].frames, runs[name].frames["job_performance"])
         assert sig["barrier_pacers"] == "up", name
         assert int(sig["barrier_pacer_count"]) >= 1, name
+
+
+# ---------------------------------------------------------------------------
+# the connectivity card
+# ---------------------------------------------------------------------------
+
+def test_halo_faces_ride_the_links_the_card_claims(bundle, cluster, router):
+    """+/-x on NVLink, +/-y inside the rack, +/-z across racks -- every mesh.
+
+    The connectivity card states this arrangement as fact and takes its link
+    classes from `placement.neighbour_kind`, so the picture cannot disagree with
+    the model by construction. What it *can* do is quietly stop being true if the
+    process grid or the placement strategy changes shape, at which point the card
+    would keep drawing a topology nobody is running. Hence asserting the
+    arrangement itself rather than the drawing of it.
+    """
+    from gcsim.mesh import DIRECTION_NAMES, partition
+    from gcsim.placement import KIND_NAMES, place
+
+    expected = {"-x": "intranode", "+x": "intranode",
+                "-y": "intra_domain", "+y": "intra_domain",
+                "-z": "cross_domain", "+z": "cross_domain"}
+
+    for name, mesh in bundle.meshes.items():
+        d = partition(mesh, cluster.n_gpus,
+                      preferred_first_extent=bundle.cluster.gpus_per_node)
+        placement = place(cluster, d, router, strategy=bundle.workload.placement)
+        for rank in (0, 37, 99, cluster.n_gpus - 1):
+            for i, direction in enumerate(DIRECTION_NAMES):
+                got = KIND_NAMES[int(placement.neighbour_kind[rank, i])]
+                assert got == expected[direction], f"{name} rank {rank} {direction}: {got}"
+
+
+def test_the_racks_form_one_ring_through_z(bundle, cluster):
+    """The +/-z neighbours close into a single cycle over all four racks.
+
+    This is the property the card's ring drawing depends on, and the reason a
+    fault on one rack surfaces on a rack that is not adjacent to it in id order.
+    Two 2-cycles or a self-loop would still render as "a ring" while meaning
+    something completely different about which racks a fault can reach.
+    """
+    from gcsim.mesh import partition
+
+    per_rack = bundle.cluster.gpus_per_rack
+    n_racks = cluster.n_gpus // per_rack
+    assert n_racks > 2                     # a 2-rack cluster rings trivially
+
+    for name, mesh in bundle.meshes.items():
+        d = partition(mesh, cluster.n_gpus,
+                      preferred_first_extent=bundle.cluster.gpus_per_node)
+        ring = [int(d.neighbours[k * per_rack][5]) // per_rack for k in range(n_racks)]
+
+        #  Walk +z from rack 0: it must reach every rack exactly once and return.
+        visited, current = [], 0
+        for _ in range(n_racks):
+            current = ring[current]
+            visited.append(current)
+        assert sorted(visited) == list(range(n_racks)), f"{name}: {ring} is not one cycle"
+        assert visited[-1] == 0, f"{name}: ring does not close, {visited}"
+        assert all(ring[k] != k for k in range(n_racks)), f"{name}: self-loop in {ring}"
