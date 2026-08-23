@@ -1098,6 +1098,7 @@ function tabTelemetry() {
 const SIG_ROWS = [
   ["iteration_time", "Timestep duration", 0],
   ["rank_spread", "Rank spread", 1],
+  ["barrier_pacers", "Ranks pacing the barrier", 1],
   ["compute", "Compute time", 1],
   ["halo", "Halo exchange time", 1],
   ["utilisation", "GPU utilisation", 0],
@@ -1163,8 +1164,17 @@ function tabDiagnosis() {
         top row separates nothing. What separates them is the pattern of what did
         <em>not</em> move: <code>phase_change</code> is the only slowdown with a tight rank
         spread and clean device counters; <code>network_domain</code> is the only one where
-        compute time is untouched; <code>straggler</code> and <code>gpu_degradation</code> are
-        identical everywhere except <code>throttle_reason</code>.</p>
+        compute time is untouched; <code>gpu_degradation</code> is the only device that reports
+        its own condition, through <code>throttle_reason</code>.</p>
+      <p class="note"><b>Read the <code>straggler</code> column carefully.</b> Almost every row
+        here compares an early window against a late one, and that question cannot see a fault
+        which was <em>already running during the early window</em>. This scenario's episodes
+        start at the first timestep, so both windows move together and every window-based row
+        reports flat &mdash; a column of dashes that looks exactly like a healthy cluster.
+        <b>Ranks pacing the barrier</b> is the one row that needs no baseline, and it is what
+        catches it. That is also why the diagnosis checks who is pacing <em>before</em> it looks
+        at how much the job slowed down: on this run the slowdown is 1.3%, and waiting for that
+        number to move would mean never finding the fault at all.</p>
     </div>
 
     <div class="card">

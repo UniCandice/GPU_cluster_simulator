@@ -32,8 +32,8 @@ import pandas as pd
 
 from gcsim.config import load_config
 from gcsim.mesh import partition
-from gcsim.metrics import (counter_conservation, mesh_scaling_table,
-                           straggler_attribution)
+from gcsim.metrics import (STRAGGLER_DUTY_FLOOR, counter_conservation,
+                           mesh_scaling_table, straggler_attribution)
 from gcsim.telemetry import read_run
 
 TIME_BINS = 96
@@ -318,9 +318,24 @@ def _signature_row(frames: dict[str, pd.DataFrame], job: pd.DataFrame) -> dict[s
 
     spread_before, spread_after = _window(job["rank_spread_s"].to_numpy())
 
+    #  How many ranks paced the barrier for a meaningful share of the late
+    #  window. Every other row in this matrix is an early-vs-late comparison,
+    #  which is structurally blind to a fault that was already running during
+    #  the early window: both windows move together and every channel reports
+    #  "flat". This row needs no baseline, so it is the one that still sees an
+    #  intermittent straggler -- and it is the same signal `metrics.diagnose`
+    #  localises on, sharing its threshold rather than keeping a second copy.
+    rank = frames["rank_performance"]
+    late_rank = rank[rank["iteration"] >= rank["iteration"].max() * (1.0 - TAIL)]
+    n_late = max(int(late_rank["iteration"].nunique()), 1)
+    pacers = late_rank.groupby("rank_id")["is_straggler"].sum()
+    n_pacers = int((pacers >= n_late * STRAGGLER_DUTY_FLOOR).sum())
+
     return {
         "iteration_time": dirn(job["iteration_time_s"], 0.03),
         "rank_spread": _direction(spread_before, spread_after, 1.0),
+        "barrier_pacers": "up" if n_pacers else "flat",
+        "barrier_pacer_count": str(n_pacers),
         "compute": dirn(job["compute_mean_s"], 0.03),
         "halo": dirn(job["halo_mean_s"], 0.10),
         "utilisation": dirn(fleet["utilization_pct"], 0.01),

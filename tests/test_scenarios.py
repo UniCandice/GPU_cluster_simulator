@@ -682,3 +682,59 @@ def test_thermal_impact_scales_with_how_hard_the_workload_pushes_the_rack(bundle
     assert impact["coarse"][0] < impact["medium"][0] < impact["fine"][0]
     assert impact["coarse"][1] < impact["medium"][1] < impact["fine"][1]
     assert impact["coarse"][0] < 3.0 and impact["fine"][0] > 10.0
+
+
+# ---------------------------------------------------------------------------
+# the signature matrix itself
+# ---------------------------------------------------------------------------
+
+def test_every_fault_differs_from_healthy_somewhere_in_the_signature_matrix(runs):
+    """No faulted scenario may be cell-identical to `healthy`.
+
+    The matrix's own claim is that you can read across a row to find the channel
+    that separates two scenarios. If a fault matches `healthy` in every cell,
+    that claim is simply false for it, and the page contradicts its own
+    diagnosis panel.
+
+    This is a regression guard with a specific history. Almost every row is an
+    early-vs-late comparison, which is structurally blind to a fault already
+    running during the early window; when the straggler's episodes were moved to
+    start at timestep 1, its entire column went flat and nothing caught it. The
+    `barrier_pacers` row exists because it needs no baseline.
+    """
+    from gcsim.dashboard.build import _signature_row
+
+    signatures = {name: _signature_row(run.frames, run.frames["job_performance"])
+                  for name, run in runs.items()}
+    healthy_sig = signatures["healthy"]
+    #  Counts carry detail for the tooltip, not a verdict; compare the cells the
+    #  matrix actually renders.
+    cells = [k for k in healthy_sig if not k.endswith(("_count", "_gpus", "_racks", "_domains"))]
+
+    for name, sig in signatures.items():
+        if name in ("healthy", "phase_change"):
+            continue
+        differing = [k for k in cells if sig[k] != healthy_sig[k]]
+        assert differing, f"{name} is indistinguishable from healthy in every signature cell"
+
+
+def test_the_pacing_row_does_not_fire_on_the_two_non_faults(runs):
+    """...and the row added to catch the straggler must not cry wolf.
+
+    `healthy` and `phase_change` are the two runs with no hardware fault in them.
+    A detector that flagged either would have moved the problem rather than
+    solved it: `phase_change` in particular slows the job by ~10% and is exactly
+    the case a naive detector fires on.
+    """
+    from gcsim.dashboard.build import _signature_row
+
+    for name in ("healthy", "phase_change", "network_domain"):
+        sig = _signature_row(runs[name].frames, runs[name].frames["job_performance"])
+        assert sig["barrier_pacers"] == "flat", name
+        assert sig["barrier_pacer_count"] == "0", name
+
+    #  ...while the three faults that do localise to hardware all register.
+    for name in ("straggler", "thermal", "gpu_degradation"):
+        sig = _signature_row(runs[name].frames, runs[name].frames["job_performance"])
+        assert sig["barrier_pacers"] == "up", name
+        assert int(sig["barrier_pacer_count"]) >= 1, name

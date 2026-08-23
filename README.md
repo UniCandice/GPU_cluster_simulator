@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 91 tests, ~50 s
+python -m pytest -q               # 97 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -164,20 +164,23 @@ synchronisation stall, and it only exists because the two are computed from diff
 
 ### Signature matrix (medium mesh)
 
-| Channel | healthy | straggler | network_domain | thermal | gpu_degradation | phase_change |
+| Channel | `healthy` | `straggler` | `network_domain` | `thermal` | `gpu_degradation` | `phase_change` |
 |---|---|---|---|---|---|---|
-| Timestep duration | — | ▲ | ▲ | ▲ | ▲ | ▲ |
-| **Rank spread** | — | ▲ | ▲ | ▲ | ▲ | **—** |
-| **Compute time** | — | — | **—** | — | — | — |
-| **Halo time** | — | — | **▲** | — | — | — |
+| Timestep duration | — | — | ▲ | ▲ | ▲ | ▲ |
+| **Rank spread** | — | — | **▲** | **▲** | **▲** | — |
+| **Ranks pacing the barrier** | — | **▲** | — | **▲** | **▲** | — |
+| **Compute time** | — | — | — | — | — | — |
+| **Halo exchange time** | — | — | **▲** | — | — | — |
 | GPU utilisation | — | — | — | — | — | — |
-| SM occupancy | — | ▼ | ▼ | ▼ | ▼ | ▼ |
-| Board power | — | ▼ | ▼ | ▼ | ▼ | ▼ |
-| **Rack thermal drift** | — | — | — | **▲** | — | — |
-| **Throttle reason** | none | **none** | **none** | **THERMAL** | **RELIABILITY** | **none** |
-| **Uplink down / errors** | — | — | **▲** | — | — | — |
+| SM occupancy | — | — | ▼ | ▼ | ▼ | ▼ |
+| Board power | — | — | ▼ | ▼ | ▼ | ▼ |
+| **One rack drifting thermally** | — | — | — | **▲** | — | — |
+| **Throttling** | — | — | — | **▲** | **▲** | — |
+| **Throttle reason** | **none** | **none** | **none** | **THERMAL** | **RELIABILITY** | **none** |
+| **Uplink down** | — | — | **▲** | — | — | — |
+| **Link errors / drops** | — | — | **▲** | — | — | — |
 | **Storage write latency** | — | — | — | — | — | **▲** |
-| Node io pressure | — | — | — | — | — | ▲ |
+| **Node io pressure** | **▼** | **▼** | **▼** | **▼** | **▼** | **▲** |
 
 **The discriminating rows mostly work by staying still.** Every scenario except `healthy` slows the
 job, so the top row separates nothing. What separates them is the pattern of what did *not* move:
@@ -185,18 +188,22 @@ job, so the top row separates nothing. What separates them is the pattern of wha
 - `phase_change` is the only slowdown with a **tight rank spread** and clean device counters. It
   costs ~10% throughput — enough to trip any threshold detector — and no hardware channel moves.
 - `network_domain` is the only one where **compute time is untouched**: the loss is on the wire.
-- `straggler` and `gpu_degradation` are the near pair: both present as "one slow rank, no fabric
-  signal, no thermal drift", and their signature columns above are identical except for one cell.
-  Two things separate them. The device counter — `throttle_reason = RELIABILITY`, because a
-  degraded device reports its own condition while a stolen-SM straggler leaves no fingerprint on
-  any counter at all. And **time**: `gpu_degradation` is pinned to one GPU for the rest of the
-  run, while `straggler` is episodic, owning the barrier in bursts and handing it back in between.
-- **`straggler` is the one fault with no clean baseline.** Its episodes start at the first
-  timestep, as a job inheriting stale processes from whatever ran before it would. So the
-  early-vs-late comparison every other scenario leans on reports **+1.3%** — nothing. Split the
-  same run by whether an episode was running and it is unmistakable: **+49%** on iteration time
-  and **11×** on rank spread, with the job 13.6% slower overall than healthy. The information was
-  never missing; it was averaged away.
+- `gpu_degradation` is the only device that **reports its own condition**, through
+  `throttle_reason = RELIABILITY`. A stolen-SM straggler leaves no fingerprint on any counter.
+- **Read the `straggler` column carefully — it is almost all dashes, and that is the point.**
+  Every row here except one compares an early window against a late one, and that question is
+  structurally blind to a fault which was *already running during the early window*. This
+  scenario's episodes start at the first timestep, as a job inheriting stale processes from
+  whatever ran before it would, so both windows move together and the comparison reports
+  **+1.3%** — a column that looks exactly like a healthy cluster.
+
+  **Ranks pacing the barrier** is the one row that needs no baseline, and it is what catches it.
+  That is also why `diagnose` checks who is pacing *before* it looks at how much the job slowed:
+  waiting for the slowdown to move would mean never finding this fault at all.
+
+  Split the same run by whether an episode was running and it is unmistakable: **+49%** on
+  iteration time and **11×** on rank spread, with the job 13.6% slower overall than healthy. The
+  information was never missing; it was averaged away.
 - **Intermittency also breaks mean-based attribution.** Each culprit is slow for ~10% of the run,
   so its *mean* excess busy time falls to within touching distance of the fleet's fastest silicon
   — which is genuinely slow, just not faulty. Ranking by the mean therefore promotes healthy
@@ -267,7 +274,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              91 tests
+tests/              97 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.

@@ -241,19 +241,24 @@ caused it.
 
 ## 8. Scenario signature matrix
 
-Read down a column for what a fault does; read across a row for which stream discriminates. Every
-cell is derived from telemetry, comparing each run's early window against its late one.
+Read down a column for what a fault does; read across a row for which stream discriminates. Most
+cells are derived by comparing each run's early window against its late one — with one important
+exception. `straggler` episodes begin at the first timestep, so that run has no clean early window
+and every *window-based* row reports nothing for it. Cells marked **(in episodes)** are what the
+same run shows when it is split by whether an episode was actually running, and **ranks pacing the
+barrier** is the one row that needs no baseline at all.
 
 | Signal | `healthy` | `straggler` | `network_domain` | `thermal` | `gpu_degradation` | `phase_change` |
 |---|---|---|---|---|---|---|
-| Timestep duration | — | ▲ | ▲ | ▲ | ▲ | ▲ |
-| **Rank spread** | tight | **wide** | wide | wide | **wide** | **tight** |
-| **Victim compute time** | — | ▲ | **unchanged** | ▲ (lagged) | ▲ | uniform |
+| Timestep duration | — | **— (▲ in episodes)** | ▲ | ▲ | ▲ | ▲ |
+| **Rank spread** | tight | **— (wide in episodes)** | wide | wide | **wide** | **tight** |
+| **Ranks pacing the barrier** | 0 | **3** | 0 | **32** | **1** | 0 |
+| **Victim compute time** | — | **▲ in episodes** | **unchanged** | ▲ (lagged) | ▲ | uniform |
 | **Peer compute time** | — | unchanged | unchanged | unchanged | unchanged | uniform |
-| Peer wait time | low | ▲ | ▲ | ▲ | ▲ | low |
+| Peer wait time | low | **▲ in episodes** | ▲ | ▲ | ▲ | low |
 | GPU utilisation | steady | **high (spinning)** | high | high | high | uniform |
-| SM occupancy | steady | ▼ | ▼ | ▼ | ▼ | ▼ |
-| GPU temperature | stable | victim ▲, peers ▼ | normal | **ramps, throttles** | victim ▲ | normal |
+| SM occupancy | steady | **▼ in episodes** | ▼ | ▼ | ▼ | ▼ |
+| GPU temperature | stable | victim ▲ vs peers | normal | **ramps, throttles** | victim ▲ | normal |
 | **Rack thermal drift** | — | — | — | **▲ one rack** | — | — |
 | **Throttle flag** | false | **false** | **false** | **true** | **true** | **false** |
 | **Throttle reason** | NONE | **NONE** | **NONE** | **THERMAL** | **RELIABILITY** | **NONE** |
@@ -266,7 +271,7 @@ cell is derived from telemetry, comparing each run's early window against its la
 | Active uplinks | 8 | 8 | **1** | 8 | 8 | 8 |
 | **Storage latency** | periodic spikes | periodic | periodic | periodic | periodic | **sustained ▲** |
 | Node io pressure | low | low | low | low | low | **▲** |
-| Affected geometry | — | **1 rank** | **32, contiguous** | **32, contiguous** | **1 GPU** | **all 128** |
+| Affected geometry | — | **3 ranks, intermittent** | **32, contiguous** | **32, contiguous** | **1 GPU** | **all 128** |
 | *ground truth* `fault` | false | true | true | true | true | **false** |
 
 **The discriminating rows mostly work by staying still.** A naive detector fires on `phase_change`
