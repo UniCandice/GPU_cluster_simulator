@@ -110,8 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_dashboard:
         from gcsim.dashboard.build import build_dashboard
         print("\nbuilding dashboard ...", end="", flush=True)
-        path, stamp = build_dashboard(runs_dir=args.runs, out_path=args.dashboard)
-        print(f" {path}  ({path.stat().st_size / 1e6:.1f} MB)  --  Generated: {stamp}")
+        paths, stamp = build_dashboard(runs_dir=args.runs, out_path=args.dashboard)
+        print(f"  Generated: {stamp}")
+        for path in paths:
+            print(f"    {path}  ({path.stat().st_size / 1e6:.1f} MB)")
 
     return 0
 

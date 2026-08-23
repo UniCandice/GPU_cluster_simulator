@@ -112,8 +112,9 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     from gcsim.dashboard.build import build_dashboard
-    path, stamp = build_dashboard(runs_dir=args.runs or DEFAULT_RUNS_DIR, out_path=args.out)
-    print(f"dashboard written to {path}  ({path.stat().st_size / 1e6:.1f} MB)")
+    paths, stamp = build_dashboard(runs_dir=args.runs or DEFAULT_RUNS_DIR, out_path=args.out)
+    for path in paths:
+        print(f"dashboard written to {path}  ({path.stat().st_size / 1e6:.1f} MB)")
     print(f"  Generated: {stamp}  -- hard-refresh the page if the header shows an older stamp")
     return 0
 

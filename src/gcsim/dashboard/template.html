@@ -596,7 +596,14 @@ function renderChrome() {
   document.getElementById("meta").innerHTML = [
     ["Cluster", m.cluster], ["GPU", m.gpu_model], ["Workload", m.workload],
     ["Telemetry", m.sample_interval_s + " s sample interval"],
-    ["Seed", m.seeds.join(", ")], ["Generated", m.generated],
+    //  One seed per page. A page carrying two would be showing whichever run
+    //  loaded last, since runs are keyed by scenario and mesh with no seed in
+    //  the key. The other seeds are offered as links instead of merged in.
+    ["Seed", m.seed + (m.seed_links && m.seed_links.length > 1
+      ? " " + m.seed_links.filter(l => l.seed !== m.seed)
+          .map(l => `<a href="${l.href}">view ${l.seed}</a>`).join(" ")
+      : "")],
+    ["Generated", m.generated],
   ].map(([k, v]) => `<span><b>${k}:</b> ${v}</span>`).join("");
 
   const mesh = document.getElementById("meshsel");

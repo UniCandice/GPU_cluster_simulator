@@ -361,24 +361,59 @@ def _signature_row(frames: dict[str, pd.DataFrame], job: pd.DataFrame) -> dict[s
 # payload
 # ---------------------------------------------------------------------------
 
-def build_payload(runs_dir: Path | str) -> dict[str, Any]:
+def seeds_under(runs_dir: Path | str) -> list[int]:
+    """Every seed with runs on disk, ascending."""
+    runs_dir = Path(runs_dir)
+    found = set()
+    for d in sorted(runs_dir.iterdir()):
+        summary = d / "summary.json"
+        if d.is_dir() and summary.exists():
+            with summary.open("r", encoding="utf-8") as fh:
+                found.add(int(json.load(fh)["seed"]))
+    return sorted(found)
+
+
+def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, Any]:
+    """Payload for ONE seed.
+
+    Runs are keyed by `scenario__mesh`, which carries no seed, so loading two
+    seeds at once means the second silently overwrites the first and the page
+    shows a mixture of both while claiming to show all of them. A payload is
+    therefore one seed's worth, and `seed` says which.
+
+    Passing None is only a convenience for the single-seed case: it resolves to
+    the one seed present and refuses to guess when there is more than one.
+    """
     runs_dir = Path(runs_dir)
     bundle = load_config()
 
-    run_dirs = sorted(p for p in runs_dir.iterdir()
-                      if p.is_dir() and (p / "summary.json").exists())
-    if not run_dirs:
+    available = seeds_under(runs_dir)
+    if not available:
         raise FileNotFoundError(
             f"no runs found under {runs_dir}; run scripts/run_all.py first")
+    if seed is None:
+        if len(available) > 1:
+            raise ValueError(
+                f"runs under {runs_dir} span seeds {available}; pass seed= to say "
+                f"which one to build, or use build_dashboard() to build all of them")
+        seed = available[0]
+    elif seed not in available:
+        raise FileNotFoundError(f"no runs for seed {seed} under {runs_dir}; have {available}")
+
+    run_dirs = []
+    for p in sorted(runs_dir.iterdir()):
+        if not (p.is_dir() and (p / "summary.json").exists()):
+            continue
+        with (p / "summary.json").open("r", encoding="utf-8") as fh:
+            if int(json.load(fh)["seed"]) == seed:
+                run_dirs.append(p)
 
     runs: dict[str, Any] = {}
     healthy_summaries: list[dict] = []
-    seeds: set[int] = set()
 
     for d in run_dirs:
         frames, summary = read_run(d)
         key = f"{summary['scenario']}__{summary['mesh']}"
-        seeds.add(int(summary["seed"]))
         job = frames["job_performance"].sort_values("iteration")
         runtime = float(summary["runtime_s"])
         n_ranks = int(summary["n_ranks"])
@@ -469,7 +504,7 @@ def build_payload(runs_dir: Path | str) -> dict[str, Any]:
     return {
         "meta": {
             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            "seeds": sorted(seeds),
+            "seed": int(seed),
             "cluster": f"{cc.racks} racks x {cc.nodes_per_rack} nodes x "
                        f"{cc.gpus_per_node} GPUs = {cc.n_gpus} ranks",
             "gpu_model": cc.gpu.model,
@@ -497,21 +532,61 @@ def build_payload(runs_dir: Path | str) -> dict[str, Any]:
 
 
 def build_dashboard(runs_dir: Path | str,
-                    out_path: Path | str | None = None) -> tuple[Path, str]:
-    """Render the dashboard, returning the path and the `Generated` stamp.
+                    out_path: Path | str | None = None) -> tuple[list[Path], str]:
+    """Render one dashboard per seed. Returns every path and the `Generated` stamp.
+
+    One file per seed rather than one file for everything, because runs are
+    keyed by `scenario__mesh` -- no seed in the key -- so a combined page would
+    show whichever seed happened to load last while its header claimed to show
+    both.
+
+    With a single seed on disk the output is `dashboard/index.html`, exactly as
+    before. With several, each gets `index_seed{N}.html` and the plain
+    `index.html` is written again for the highest seed, so existing links and
+    bookmarks keep resolving to something real rather than to a stale mixture.
 
     The stamp is returned rather than discarded so a caller can print it: the
-    output path never changes between builds, so it is the only thing that
-    tells you at a glance whether the page you are looking at is this build.
+    output paths never change between builds, so it is the only thing that tells
+    you at a glance whether the page you are looking at is this build.
     """
-    payload = build_payload(runs_dir)
+    runs_dir = Path(runs_dir)
+    seeds = seeds_under(runs_dir)
+    if not seeds:
+        raise FileNotFoundError(
+            f"no runs found under {runs_dir}; run scripts/run_all.py first")
+
     out = Path(out_path) if out_path else DEFAULT_OUT
     out.parent.mkdir(parents=True, exist_ok=True)
 
     html = TEMPLATE.read_text(encoding="utf-8")
-    blob = json.dumps(payload, separators=(",", ":"), allow_nan=False)
     marker = "/*__GCSIM_DATA__*/null"
     if marker not in html:
         raise ValueError(f"template {TEMPLATE} is missing the data marker")
-    out.write_text(html.replace(marker, blob), encoding="utf-8")
-    return out, payload["meta"]["generated"]
+
+    def path_for(seed: int) -> Path:
+        return out if len(seeds) == 1 else out.with_name(f"{out.stem}_seed{seed}{out.suffix}")
+
+    #  Every page lists every seed, so the header can offer one-click switching
+    #  without the reader having to guess a filename.
+    others = [{"seed": s, "href": path_for(s).name} for s in seeds]
+
+    written: list[Path] = []
+    stamp = ""
+    for seed in seeds:
+        payload = build_payload(runs_dir, seed=seed)
+        payload["meta"]["seed_links"] = others
+        stamp = payload["meta"]["generated"]
+        blob = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+        page = html.replace(marker, blob)
+
+        target = path_for(seed)
+        target.write_text(page, encoding="utf-8")
+        written.append(target)
+
+        #  Highest seed also lands on the bare filename, so a link to
+        #  dashboard/index.html never points at nothing.
+        if len(seeds) > 1 and seed == seeds[-1]:
+            out.write_text(page, encoding="utf-8")
+            written.append(out)
+
+    return written, stamp
