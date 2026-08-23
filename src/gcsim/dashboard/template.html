@@ -797,9 +797,10 @@ function describeStructure(matrix, gpuIds, gpusPerRack, metric) {
       "of the plot. " + (metric === "wait"
         ? "On <b>barrier wait</b> that is weak evidence by itself. The barrier broadcasts one " +
           "rank's stall to all 127 peers, so a single rank going slow in bursts paints the same " +
-          "full-height bands that a job-wide phase does. Look <i>inside</i> a band for the dark " +
-          "line: if there is one, the cause is attached to that rank, not to the job &mdash; and " +
-          "if it moves from band to band, the fault is roaming."
+          "full-height bands that a job-wide phase does. Look <i>inside</i> a band for the line " +
+          "sitting at the <b>0&nbsp;ms end</b> of the scale: if there is one, the cause is " +
+          "attached to that rank, not to the job &mdash; and if it moves from band to band, the " +
+          "fault is roaming."
         : "That is the job doing something to itself, usually field output or a barrier everyone " +
           "hits at once. It is present in the healthy baseline too. On this channel no fault " +
           "attached to one GPU, node or rack can produce it.")};
@@ -817,9 +818,15 @@ function tabRanks() {
   const metrics = {
     wait: {label: "Barrier wait", unit: "ms", scale: 1, fmt: v => fmt(v, 0) + " ms",
            domain: {mode: "zero"},
+           //  Described by VALUE, never by colour. The ramp reverses between
+           //  light and dark themes so that its hot end always contrasts with
+           //  the page, which means "the dark line" names opposite ranks in the
+           //  two themes. Read the scale bar, not the shade.
            note: "Time each rank spent blocked at the barrier, on a zero-anchored scale. " +
-                 "Read it inverted: the <b>darkest</b> line is the rank everyone else is " +
-                 "waiting for, and every bright rank is a victim."},
+                 "Read it inverted: the rank at the <b>0&nbsp;ms end</b> of the scale is the one " +
+                 "everyone else is waiting for, and every rank showing a <b>large</b> wait is a " +
+                 "victim of it. Colour reverses between light and dark themes &mdash; go by the " +
+                 "scale bar, not the shade."},
     occupancy: {label: "SM occupancy", unit: "%", scale: .1, fmt: v => fmt(v, 1) + "%",
            domain: {mode: "data", minSpan: 5},
            note: "Work actually retired, while utilisation stays pinned near 100%. " +
