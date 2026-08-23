@@ -158,6 +158,12 @@ td.hl { font-weight:650; color:var(--ink); }
 .mv.down { color:var(--s1); }
 .mv.flat { color:var(--muted); font-weight:400; }
 .sig tr.key td { background:color-mix(in srgb,var(--warning) 9%,transparent); }
+/*  Section divider. The two halves answer different questions -- one compares
+    windows, one reads the whole run -- and a cell means a different thing in
+    each, so the labels alone should not have to carry that.  */
+.sig tr.sec td { background:var(--surface-2); font-size:10.5px; letter-spacing:.06em;
+                 text-transform:uppercase; color:var(--muted); font-weight:650;
+                 padding-top:11px; padding-bottom:5px; }
 
 /* --- charts ------------------------------------------------------------- */
 .chart { position:relative; }
@@ -1095,22 +1101,33 @@ function tabTelemetry() {
 }
 
 /* --- tab 5: diagnosis ----------------------------------------------------- */
+/*  Two kinds of row, and a cell does not mean the same thing in each.
+    Above the divider a cell is the DIRECTION this run's late window moved
+    relative to its early one -- which is a question that quietly assumes the
+    run started healthy. Below it a cell is simply whether the condition is
+    present anywhere in the run, needing no baseline to be read against.
+    Labelling that per row would leave every trend row saying "... shift"; the
+    grouping carries it instead. It also puts the divider exactly where the
+    straggler stops being invisible.  */
+const SEC = "§";
 const SIG_ROWS = [
+  [SEC, "Early → late shift"],
   ["iteration_time", "Timestep duration", 0],
   ["rank_spread", "Rank spread", 1],
-  ["barrier_pacers", "Ranks pacing the barrier", 1],
   ["compute", "Compute time", 1],
   ["halo", "Halo exchange time", 1],
   ["utilisation", "GPU utilisation", 0],
   ["occupancy", "SM occupancy", 0],
   ["power", "Board power", 0],
   ["rack_thermal_drift", "One rack drifting thermally", 1],
+  ["storage_latency", "Storage write latency", 1],
+  ["node_io", "Node io pressure", 1],
+  [SEC, "Present in the run — no baseline needed"],
+  ["barrier_pacers", "Ranks pacing the barrier", 1],
   ["throttled", "Throttling", 1],
   ["throttle_reason", "Throttle reason", 1],
   ["link_down", "Uplink down", 1],
   ["link_errors", "Link errors / drops", 1],
-  ["storage_latency", "Storage write latency", 1],
-  ["node_io", "Node io pressure", 1],
 ];
 
 function sigCell(v) {
@@ -1149,13 +1166,18 @@ function tabDiagnosis() {
 
     <div class="card">
       <h2>Signature matrix &mdash; ${state.mesh} mesh</h2>
-      <p class="sub">Every cell is derived from this dashboard's own telemetry, comparing each
-        run's early window against its late one. Read down a column for what a scenario does;
-        read across a row for which channel separates scenarios.</p>
+      <p class="sub">Every cell is derived from this dashboard's own telemetry, but the two
+        halves answer different questions. Above the divider a cell is the <b>direction</b> this
+        run's late window moved relative to its early one. Below it a cell is whether the
+        condition is <b>present</b> anywhere in the run &mdash; no baseline involved. Read down a
+        column for what a scenario does; read across a row for which channel separates
+        scenarios.</p>
       <div class="scroll"><table class="sig">
         <thead><tr><th>Channel</th>${cols.map(c =>
           `<th>${c.sc.name}</th>`).join("")}</tr></thead>
-        <tbody>${SIG_ROWS.map(([key, label, isKey]) => `<tr class="${isKey ? "key" : ""}">
+        <tbody>${SIG_ROWS.map(([key, label, isKey]) => key === SEC
+          ? `<tr class="sec"><td colspan="${cols.length + 1}">${label}</td></tr>`
+          : `<tr class="${isKey ? "key" : ""}">
           <td>${label}</td>${cols.map(c => `<td>${sigCell(c.r.signature[key])}</td>`).join("")}
         </tr>`).join("")}</tbody>
       </table></div>
@@ -1166,13 +1188,12 @@ function tabDiagnosis() {
         spread and clean device counters; <code>network_domain</code> is the only one where
         compute time is untouched; <code>gpu_degradation</code> is the only device that reports
         its own condition, through <code>throttle_reason</code>.</p>
-      <p class="note"><b>Read the <code>straggler</code> column carefully.</b> Almost every row
-        here compares an early window against a late one, and that question cannot see a fault
-        which was <em>already running during the early window</em>. This scenario's episodes
-        start at the first timestep, so both windows move together and every window-based row
-        reports flat &mdash; a column of dashes that looks exactly like a healthy cluster.
-        <b>Ranks pacing the barrier</b> is the one row that needs no baseline, and it is what
-        catches it. That is also why the diagnosis checks who is pacing <em>before</em> it looks
+      <p class="note"><b>Read the <code>straggler</code> column against the divider.</b> Its
+        entire top half is dashes, because a window comparison cannot see a fault that was
+        <em>already running during the early window</em> &mdash; this scenario's episodes start
+        at the first timestep, so both windows move together and the run looks exactly like a
+        healthy cluster. The fault only appears below the line, on <b>ranks pacing the
+        barrier</b>. That is also why the diagnosis checks who is pacing <em>before</em> it looks
         at how much the job slowed down: on this run the slowdown is 1.3%, and waiting for that
         number to move would mean never finding the fault at all.</p>
     </div>

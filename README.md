@@ -164,23 +164,30 @@ synchronisation stall, and it only exists because the two are computed from diff
 
 ### Signature matrix (medium mesh)
 
+The two halves answer different questions, and a cell does not mean the same thing in each. Above
+the divider it is the **direction** a run's late window moved relative to its early one. Below it,
+whether the condition is **present** anywhere in the run — no baseline involved. That distinction
+turns out to matter more than it sounds like it should; see the `straggler` column.
+
 | Channel | `healthy` | `straggler` | `network_domain` | `thermal` | `gpu_degradation` | `phase_change` |
 |---|---|---|---|---|---|---|
+| *Early → late shift* | | | | | | |
 | Timestep duration | — | — | ▲ | ▲ | ▲ | ▲ |
 | **Rank spread** | — | — | **▲** | **▲** | **▲** | — |
-| **Ranks pacing the barrier** | — | **▲** | — | **▲** | **▲** | — |
 | **Compute time** | — | — | — | — | — | — |
 | **Halo exchange time** | — | — | **▲** | — | — | — |
 | GPU utilisation | — | — | — | — | — | — |
 | SM occupancy | — | — | ▼ | ▼ | ▼ | ▼ |
 | Board power | — | — | ▼ | ▼ | ▼ | ▼ |
 | **One rack drifting thermally** | — | — | — | **▲** | — | — |
+| **Storage write latency** | — | — | — | — | — | **▲** |
+| **Node io pressure** | **▼** | **▼** | **▼** | **▼** | **▼** | **▲** |
+| *Present in the run — no baseline needed* | | | | | | |
+| **Ranks pacing the barrier** | — | **▲** | — | **▲** | **▲** | — |
 | **Throttling** | — | — | — | **▲** | **▲** | — |
 | **Throttle reason** | **none** | **none** | **none** | **THERMAL** | **RELIABILITY** | **none** |
 | **Uplink down** | — | — | **▲** | — | — | — |
 | **Link errors / drops** | — | — | **▲** | — | — | — |
-| **Storage write latency** | — | — | — | — | — | **▲** |
-| **Node io pressure** | **▼** | **▼** | **▼** | **▼** | **▼** | **▲** |
 
 **The discriminating rows mostly work by staying still.** Every scenario except `healthy` slows the
 job, so the top row separates nothing. What separates them is the pattern of what did *not* move:
@@ -190,16 +197,15 @@ job, so the top row separates nothing. What separates them is the pattern of wha
 - `network_domain` is the only one where **compute time is untouched**: the loss is on the wire.
 - `gpu_degradation` is the only device that **reports its own condition**, through
   `throttle_reason = RELIABILITY`. A stolen-SM straggler leaves no fingerprint on any counter.
-- **Read the `straggler` column carefully — it is almost all dashes, and that is the point.**
-  Every row here except one compares an early window against a late one, and that question is
-  structurally blind to a fault which was *already running during the early window*. This
-  scenario's episodes start at the first timestep, as a job inheriting stale processes from
-  whatever ran before it would, so both windows move together and the comparison reports
-  **+1.3%** — a column that looks exactly like a healthy cluster.
+- **Read the `straggler` column against the divider.** Its entire top half is dashes, and that is
+  the point. A shift row is blind to a fault which was *already running during the early window* —
+  this scenario's episodes start at the first timestep, as a job inheriting stale processes from
+  whatever ran before it would, so both windows move together and the comparison reports **+1.3%**.
+  Above the line the run is indistinguishable from a healthy cluster.
 
-  **Ranks pacing the barrier** is the one row that needs no baseline, and it is what catches it.
-  That is also why `diagnose` checks who is pacing *before* it looks at how much the job slowed:
-  waiting for the slowdown to move would mean never finding this fault at all.
+  It only appears **below** the line, on **ranks pacing the barrier**. That is also why `diagnose`
+  checks who is pacing *before* it looks at how much the job slowed: waiting for the slowdown to
+  move would mean never finding this fault at all.
 
   Split the same run by whether an episode was running and it is unmistakable: **+49%** on
   iteration time and **11×** on rank spread, with the job 13.6% slower overall than healthy. The
