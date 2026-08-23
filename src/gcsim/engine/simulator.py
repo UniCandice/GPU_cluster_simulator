@@ -359,6 +359,11 @@ class Simulator:
         rp["iteration"][lo:hi] = iteration
         rp["rank_id"][lo:hi] = np.arange(self.n_ranks)
         rp["compute_time_s"][lo:hi] = compute_s
+        #  Despite the name this is the halo exchange DURATION, not a wait: it
+        #  is work, and it sits beside compute_time_s in the timestep budget.
+        #  The only real wait in this table is allreduce_wait_s below. Kept as
+        #  is because renaming a schema column invalidates every run on disk;
+        #  see TELEMETRY.md under `rank_performance`.
         rp["halo_wait_s"][lo:hi] = halo_s
         #  Barrier slack plus the rank's share of the collective. Chosen so that
         #  the four phase columns sum EXACTLY to total_time_s for every rank --

@@ -207,6 +207,14 @@ The four phase columns sum **exactly** to `total_time_s` for every rank at every
 did not hold, `wait` would be a free parameter rather than the barrier slack it is supposed to be,
 and the whole attribution story would rest on nothing.
 
+**`halo_wait_s` is the halo exchange duration, not a wait.** It is work — time spent moving halo
+bytes — and belongs in the timestep budget next to `compute_time_s`. The name is historical, and
+kept because renaming a schema column would invalidate every run already written to disk. Of the
+two columns here that look like waits, only `allreduce_wait_s` is one: it carries barrier slack
+*plus* the collective, and it is the quantity the attribution story above actually rests on. Worth
+knowing before reading the sum, because "wait counted as work" looks like an accounting bug until
+you know one of the two is not a wait at all.
+
 ### `job_performance` — per timestep
 
 ```
