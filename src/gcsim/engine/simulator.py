@@ -287,6 +287,13 @@ class Simulator:
             #  Give the filesystem the timestep's worth of wall clock so any
             #  writeback backlog drains -- this is what makes the *baseline*
             #  between outputs recover (or not) after a heavy output campaign.
+            #
+            #  Deliberately not called on output steps, which means the
+            #  compute+halo+allreduce part of every Nth timestep contributes
+            #  no drain time. The write itself already advanced the model, and
+            #  crediting the rest would let the queue drain during the very
+            #  step that filled it. The cost is a small consistent bias
+            #  against draining, on 1 timestep in `output_interval`.
             self.storage.advance(iter_time)
 
         # --- 4. record performance ---------------------------------------

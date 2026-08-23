@@ -183,18 +183,9 @@ class Channel:
     port_ids: list[str] = field(default_factory=list)
     base_ber: float = 0.0
 
-    # per-phase accounting, reset by the network model each exchange
-    load_bytes: dict[str, float] = field(default_factory=lambda: {TX: 0.0, RX: 0.0})
-    flow_count: dict[str, int] = field(default_factory=lambda: {TX: 0, RX: 0})
-    queue_depth: dict[str, float] = field(default_factory=lambda: {TX: 0.0, RX: 0.0})
-    loss_rate: dict[str, float] = field(default_factory=lambda: {TX: 0.0, RX: 0.0})
-
-    def reset_load(self) -> None:
-        for d in (TX, RX):
-            self.load_bytes[d] = 0.0
-            self.flow_count[d] = 0
-            self.queue_depth[d] = 0.0
-            self.loss_rate[d] = 0.0
+    #  No per-phase accounting fields here. `Fabric.solve` carries load,
+    #  queue depth and loss in its own arrays and writes results straight
+    #  to ports; a mirrored copy on Channel was only ever reset, never read.
 
 
 # ---------------------------------------------------------------------------
@@ -240,10 +231,6 @@ class Cluster:
 
     def intranode_channel(self, node_id: str) -> Channel:
         return self.channels[f"intranode:{node_id}"]
-
-    def reset_channel_load(self) -> None:
-        for ch in self.channels.values():
-            ch.reset_load()
 
 
 def build_cluster(cfg: ClusterConfig) -> Cluster:

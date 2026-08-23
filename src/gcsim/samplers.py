@@ -47,27 +47,23 @@ class ActivityWindow:
     n_ranks: int
     compute_s: np.ndarray = field(init=False)
     occupancy_weighted: np.ndarray = field(init=False)
-    resident_s: np.ndarray = field(init=False)
     output_s: float = 0.0
     span_s: float = 0.0
 
     def __post_init__(self) -> None:
         self.compute_s = np.zeros(self.n_ranks)
         self.occupancy_weighted = np.zeros(self.n_ranks)
-        self.resident_s = np.zeros(self.n_ranks)
 
     def credit(self, fraction: float, compute_s: np.ndarray, occupancy: np.ndarray,
                iteration_time_s: float, output_s: float) -> None:
         self.compute_s += compute_s * fraction
         self.occupancy_weighted += occupancy * compute_s * fraction
-        self.resident_s += np.full(self.n_ranks, iteration_time_s * fraction)
         self.output_s += output_s * fraction
         self.span_s += iteration_time_s * fraction
 
     def reset(self) -> None:
         self.compute_s[:] = 0.0
         self.occupancy_weighted[:] = 0.0
-        self.resident_s[:] = 0.0
         self.output_s = 0.0
         self.span_s = 0.0
 
@@ -328,7 +324,16 @@ class SamplerSet:
             #  Oversubscription is itself an observable: when uplinks fail, the
             #  ratio jumps, which localises the fault to a domain without any
             #  reference to ground truth.
-            oversub = (a["down_cap"] / up_cap) if up_cap > 0 else float("inf")
+            #  A spine has no uplinks, so it is not oversubscribed relative to
+            #  anything and the ratio is undefined -- NaN, not inf. Reserve inf
+            #  for a leaf that has uplink ports but has lost every one of them,
+            #  where "infinitely oversubscribed" is the honest reading. An inf
+            #  parked in a telemetry table for a structural reason is a trap for
+            #  anything that later aggregates the column.
+            if not switch.uplink_ids:
+                oversub = float("nan")
+            else:
+                oversub = (a["down_cap"] / up_cap) if up_cap > 0 else float("inf")
             self.switch_rows.append({
                 "timestamp": t_s, "scenario": self.scenario, "seed": self.seed,
                 "switch_id": switch.switch_id, "switch_tier": switch.tier,

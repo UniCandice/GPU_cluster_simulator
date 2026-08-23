@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 99 tests, ~50 s
+python -m pytest -q               # 100 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -286,7 +286,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              99 tests
+tests/              100 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
@@ -364,6 +364,13 @@ Beyond the usual unit coverage, the tests that carry the argument:
 - **Congestion never causes drops in the halo exchange**, because a closed-loop application-paced
   workload cannot overload a link — the flows simply take longer. Drops here come from physical
   frame errors. That is correct for this workload but would not hold for an open-loop one.
+- **Byte counters record offered bytes at both ends.** `rx_bytes` equals `tx_bytes` across a link
+  even when frames are being dropped, because both sides are credited from the same flow. A real
+  switch would show `rx < tx` across a lossy link, with the shortfall visible as drops. The
+  simplification is deliberate: it is what makes the counter-conservation invariant hold *exactly*
+  rather than approximately, so a violation means a genuine accounting bug and not accumulated
+  loss. Drops and errors are still counted separately, so nothing is hidden — they just are not
+  subtracted from the byte totals.
 - **Storage traffic does not contend with the fabric.** Field output and the one-off mesh load are
   costed by `StorageModel` — bandwidth, queue depth, writeback backlog — and never enter the flow
   solver that carries the halo. The separation is structural, not incidental: `storage.py` imports

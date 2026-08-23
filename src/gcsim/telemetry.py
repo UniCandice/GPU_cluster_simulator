@@ -72,7 +72,9 @@ SCHEMAS: dict[str, list[str]] = {
 #: populated.
 NULLABLE_COLUMNS: dict[str, set[str]] = {
     "telemetry_switch_port": {"domain_id"},
-    "telemetry_switch_aggregate": {"domain_id"},
+    #  NaN on spine rows: a spine has no uplinks, so it is not oversubscribed
+    #  relative to anything and the ratio is undefined rather than infinite.
+    "telemetry_switch_aggregate": {"domain_id", "oversubscription_ratio"},
     "events": {"rank_id", "gpu_id"},
 }
 

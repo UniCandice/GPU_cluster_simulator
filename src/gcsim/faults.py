@@ -125,6 +125,20 @@ def _plan_episodes(ctx: InjectionContext) -> list[dict[str, Any]]:
 
     span = max(end - start, 1)
     slot = span / n
+
+    #  Non-overlap is what makes "at most one rank derated, everything else
+    #  exactly baseline" assertable, and it holds only while an episode fits
+    #  inside its own slot. Raise `episodes` or `duration_iterations` far enough
+    #  and an episode runs past its slot boundary; the next episode's start tick
+    #  then passes while the previous one is still active, the handler's
+    #  `start == iteration` test never matches again, and that episode is
+    #  silently dropped -- a quieter fault than the one being injected. Fail
+    #  loudly at plan time instead.
+    if d_max > slot:
+        raise ValueError(
+            f"straggler episodes cannot fit: duration up to {d_max} timesteps in "
+            f"slots of {slot:.1f} ({span} timesteps / {n} episodes). Lower "
+            f"`episodes` or `duration_iterations`, or widen the span.")
     plan: list[dict[str, Any]] = []
     for k in range(n):
         duration = int(rng.integers(d_min, d_max + 1))
@@ -329,7 +343,12 @@ class FaultInjector:
         for act in self._ramping:
             elapsed = iteration - act.injection.at_iteration
             progress = min(1.0, elapsed / act.ramp)
-            self._apply(act.injection, iteration, progress=progress)
+            #  Skip the tick it fired on. The loop above already applied it at
+            #  progress 0, and elapsed is 0 here, so re-applying would set the
+            #  identical value a second time -- harmless, but it makes the trace
+            #  read as though the injection happened twice.
+            if elapsed > 0:
+                self._apply(act.injection, iteration, progress=progress)
             if progress < 1.0:
                 still.append(act)
         self._ramping = still

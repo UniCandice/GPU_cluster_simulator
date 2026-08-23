@@ -289,7 +289,27 @@ class Fabric:
                 nic.rx_drops += sol.cd_drop_packets[i]
                 nic.rx_errors += sol.cd_error_packets[i]
 
-        # --- queue state on the leaf downlink ports, from their NIC channel -
+        # --- queue state, cleared then refilled from this phase's solution ---
+        #  `queue_depth` and `utilisation` are documented on Port as
+        #  instantaneous and refreshed each phase. Clearing them here is what
+        #  makes that true. Taking max() against whatever was left from last
+        #  phase -- as this branch used to -- silently turns them into a
+        #  monotone high-water mark over the entire run: once a transient fault
+        #  clears, the gauge stays pinned at its historic peak and reports a
+        #  queue that is no longer there.
+        #
+        #  Invisible with the scenarios as they stand, because healthy runs are
+        #  steady state and `leaf_uplink_failure` never recovers. Not invisible
+        #  the moment a fabric fault is made intermittent -- which the straggler
+        #  already is on the compute side.
+        #
+        #  The max() below is still needed, for a different reason: a channel
+        #  appears once per direction, and the port should report the busier of
+        #  the two rather than whichever happened to be visited last.
+        for port in cl.port_list:
+            port.queue_depth = 0.0
+            port.utilisation = 0.0
+
         for i, (cid, direction) in enumerate(zip(self.cd_channel, self.cd_direction)):
             if not cid.startswith("nic:"):
                 continue
@@ -328,8 +348,10 @@ class Fabric:
                     port.rx_bytes += sol.cd_bytes[i] * share
                     port.rx_drops += sol.cd_drop_packets[i] * share
                     port.rx_errors += sol.cd_error_packets[i] * share
-                port.queue_depth = sol.cd_queue[i]
-                port.utilisation = sol.cd_rho[i]
+                #  max(), not assignment: same reason as the downlink branch,
+                #  and now safe because the clear above already ran.
+                port.queue_depth = max(port.queue_depth, sol.cd_queue[i])
+                port.utilisation = max(port.utilisation, sol.cd_rho[i])
 
     # -- collectives -------------------------------------------------------
 
