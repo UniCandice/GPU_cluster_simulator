@@ -938,21 +938,44 @@ function tabMesh() {
       <td>~${fmt(f.latency_us, 0)} &micro;s</td><td>${fmt(share, 0)}%</td></tr>`;
   }).join("");
 
+  //  Which rack, if any, has actually lost uplinks in the SELECTED run. Read off
+  //  the leaf port counters rather than from the scenario name or a hard-coded
+  //  index: this is a fault the telemetry reports, so the diagram should observe
+  //  it like everything else on this page. On five of the six scenarios nothing
+  //  is degraded and the ring draws plain -- marking r2 regardless, as this card
+  //  first did, painted network_domain's fault onto runs that never had it.
+  const conservation = run().fabric.conservation;
+  const fullUplinks = Math.max(...conservation.map(c => c.active_uplinks));
+  const degraded = conservation.filter(c => c.active_uplinks < fullUplinks)
+                               .map(c => +c.domain_id.slice(1));
+
   //  The ring is drawn from the payload's z_ring -- the rack each rack's +z face
   //  actually reaches -- rather than from an assumed 0-1-2-3 cycle, so it stays
   //  honest if the grid or the placement ever changes shape.
-  //  Colour is used semantically (--critical for the degraded pair) and never to
+  //  Colour is used semantically (--critical for a degraded link) and never to
   //  encode a magnitude: the ramp reverses between themes, these tokens do not.
-  const ring = p.z_ring, nR = ring.length, DEGRADED = 2;
+  const ring = p.z_ring, nR = ring.length;
+  const isBad = k => degraded.includes(k);
   const at = ring.map((_, k) => {
     const a = -Math.PI / 2 + k * 2 * Math.PI / nR;
     return [110 + 60 * Math.cos(a), 92 + 60 * Math.sin(a)];
   });
+  //  A degraded uplink slows every exchange that enters or leaves that rack, so
+  //  the racks left untouched are those with no face onto it -- walk the ring
+  //  both ways from each degraded rack rather than assuming who its partners are.
+  const slowed = new Set();
+  degraded.forEach(d => {
+    slowed.add(d).add(ring[d]);
+    ring.forEach((to, from) => { if (to === d) slowed.add(from); });
+  });
+  const clean = ring.map((_, k) => k).filter(k => !slowed.has(k));
+  const racks = ks => [...ks].sort((a, b) => a - b).map(k => `<code>r${k}</code>`).join(", ");
+
   const ringSvg = `
     <svg viewBox="0 0 220 205" width="100%" height="205" role="img"
          aria-label="the four racks form a ring through their plus and minus z halo exchanges">
       ${ring.map((to, from) => {
-        const bad = from === DEGRADED || to === DEGRADED;
+        const bad = isBad(from) || isBad(to);
         return `<line x1="${at[from][0].toFixed(1)}" y1="${at[from][1].toFixed(1)}"
           x2="${at[to][0].toFixed(1)}" y2="${at[to][1].toFixed(1)}"
           stroke="${bad ? "var(--critical)" : "var(--axis)"}"
@@ -960,13 +983,15 @@ function tabMesh() {
       }).join("")}
       ${at.map(([x, y], k) => `
         <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="17"
-                fill="${k === DEGRADED ? "var(--critical)" : "var(--surface-2)"}"
+                fill="${isBad(k) ? "var(--critical)" : "var(--surface-2)"}"
                 stroke="var(--axis)" stroke-width="1"/>
         <text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="middle"
               font-size="12" font-weight="600" font-family="var(--font-data)"
-              fill="${k === DEGRADED ? "var(--surface)" : "var(--ink)"}">r${k}</text>`).join("")}
+              fill="${isBad(k) ? "var(--surface)" : "var(--ink)"}">r${k}</text>`).join("")}
       <text x="110" y="196" text-anchor="middle" font-size="10.5" fill="var(--muted)">
-        &plusmn;z exchanges. Dashed: the two a degraded r2 uplink slows.</text>
+        ${degraded.length
+          ? `&plusmn;z exchanges. Dashed: the two a degraded ${degraded.map(k => "r" + k).join(", ")} uplink slows.`
+          : "&plusmn;z exchanges. Every rack keeps all its uplinks in this run."}</text>
     </svg>`;
 
   document.getElementById("view").innerHTML = `
@@ -1029,13 +1054,14 @@ function tabMesh() {
         and only a quarter of it ever crosses a spine. Put the largest faces on the slowest link
         instead and the same mesh on the same cluster runs materially slower; that is what the
         <code>scatter</code> placement in <code>placement.py</code> exists to demonstrate.</p>
-      <p class="note"><b>The ring is why a rack fault surfaces somewhere unexpected.</b> The
-        &plusmn;z neighbours close into a cycle, so degrading one rack's uplink slows only the two
-        exchanges that touch it. In <code>network_domain</code> that is rack 2, which leaves racks
-        1, 2 and 3 each carrying a slowed face and rack 0 carrying none. Rack 0 then finishes
-        early and spends the whole run waiting &mdash; so the wait band appears on <b>r0</b>, two
-        racks away from the fault. At a barrier you see a fault in whoever is
-        <em>not</em> affected by it.</p>
+      ${degraded.length && clean.length ? `
+      <p class="note"><b>The ring is why this rack fault surfaces somewhere unexpected.</b> The
+        &plusmn;z neighbours close into a cycle, so degrading ${racks(degraded)}'s uplink slows
+        only the two exchanges that touch it. That leaves ${racks(slowed)} each carrying a slowed
+        face and ${racks(clean)} carrying none. ${racks(clean)} then finishes early and spends the
+        rest of the run waiting &mdash; so the wait band on the Ranks tab appears on
+        ${racks(clean)}, not on the rack that failed. At a barrier you see a fault in whoever is
+        <em>not</em> affected by it.</p>` : ""}
       <p class="note"><b>That closing edge is the periodicity, not a drawing convention.</b> The
         domain is a triply periodic cube &mdash; a Taylor&ndash;Green vortex box &mdash; so
         <code>r3</code> wraps round to <code>r0</code> in z exactly as every rank wraps to its
