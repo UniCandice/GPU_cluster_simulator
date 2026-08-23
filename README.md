@@ -335,7 +335,9 @@ Beyond the usual unit coverage, the tests that carry the argument:
 - `seconds_per_cell_update` represents a full outer timestep *inclusive of all 20 inner
   linear-solver iterations*. The halo is exchanged once per inner iteration, which is what makes
   communication matter at all for an implicit solver.
-- Storage traffic uses a **separate storage fabric** and does not contend with halo traffic.
+- Storage traffic uses a **separate storage fabric** and does not contend with halo traffic. This
+  one is load-bearing — it is what keeps `phase_change`'s fabric counters flat — so it is written
+  up properly under [Known limitations](#known-limitations) rather than left as a bare assumption.
 - The job is at **thermal equilibrium** when observed; the cold-start transient is not modelled.
 - Constants are plausible order-of-magnitude values for an H100-SXM-class node. They are **not
   calibrated** against real telemetry — see below.
@@ -362,6 +364,22 @@ Beyond the usual unit coverage, the tests that carry the argument:
 - **Congestion never causes drops in the halo exchange**, because a closed-loop application-paced
   workload cannot overload a link — the flows simply take longer. Drops here come from physical
   frame errors. That is correct for this workload but would not hold for an open-loop one.
+- **Storage traffic does not contend with the fabric.** Field output and the one-off mesh load are
+  costed by `StorageModel` — bandwidth, queue depth, writeback backlog — and never enter the flow
+  solver that carries the halo. The separation is structural, not incidental: `storage.py` imports
+  nothing from `network.py`. Real clusters are usually not built this way. Checkpoint traffic
+  crosses the same leaf and spine as the halo, so on the medium mesh an 8.6 GB field write (34.6 GB
+  once `phase_change` quadruples it) landing while 144 MB per rank of halo is in flight would slow
+  both, and the fabric counters would move during an output campaign.
+
+  Here they do not, and that has a visible consequence worth being honest about: `phase_change`
+  raises storage latency and node I/O pressure while leaving **every fabric channel flat**, which
+  is exactly what makes it separable from `network_domain` in the signature matrix. The
+  simplification is therefore load-bearing rather than harmless — it buys a clean discrimination
+  that a contended model would blur. The extension is well defined: build the output write as a
+  `FlowSet` aimed at the storage targets and pass it to `Fabric.solve` alongside `halo_flows` in
+  the same timestep, so the two compete for the same links. That is a deliberate next step, not an
+  oversight, and it would need the `phase_change` signature re-derived rather than assumed.
 - The **diagnosis is a small rule set**, not a detector anyone should deploy. It exists to make the
   discriminating channels explicit and checkable, and it is scored against ground truth on the
   dashboard (18/18 on the current matrix).
@@ -396,6 +414,11 @@ is a falsifiable prediction.
 - **A new telemetry channel** means a field in `SCHEMAS`, a line in the relevant sampler, and — if
   it is a counter or a bounded gauge — an entry in `CUMULATIVE_COLUMNS` or `BOUNDED_COLUMNS`, which
   makes the invariant tests cover it automatically.
+- **Putting storage traffic on the fabric** is the one extension that changes results rather than
+  adding to them. Output bytes would become a `FlowSet` solved alongside `halo_flows`, so a field
+  write and a halo exchange contend for the same links. Expect `phase_change` to stop being clean
+  on the fabric channels, and re-derive its signature column rather than porting the current one
+  across. See [Known limitations](#known-limitations).
 
 ## Prior art
 
