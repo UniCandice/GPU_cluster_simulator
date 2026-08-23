@@ -13,9 +13,11 @@ rank. Two consequences drive almost everything downstream:
     ranks. The result is real load imbalance on a perfectly healthy cluster,
     which is the control case for every straggler scenario.
 
-The domain is triply periodic (a homogeneous-turbulence box), so every rank has
-exactly six neighbours and no rank is privileged by sitting on a wall. Any
-imbalance in the reported metrics therefore comes from partitioning alone.
+The domain is triply periodic -- a Taylor-Green vortex box, which is the
+canonical case for this geometry -- so every rank has exactly six neighbours
+and no rank is privileged by sitting on a wall. Any imbalance in the reported
+metrics therefore comes from partitioning alone. A walled case would break
+that: boundary ranks would own five faces instead of six.
 """
 
 from __future__ import annotations

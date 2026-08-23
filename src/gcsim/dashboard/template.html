@@ -1025,6 +1025,12 @@ function tabMesh() {
         early and spends the whole run waiting &mdash; so the wait band appears on <b>r0</b>, two
         racks away from the fault. At a barrier you see a fault in whoever is
         <em>not</em> affected by it.</p>
+      <p class="note"><b>That closing edge is the periodicity, not a drawing convention.</b> The
+        domain is a triply periodic cube &mdash; a Taylor&ndash;Green vortex box &mdash; so
+        <code>r3</code> wraps round to <code>r0</code> in z exactly as every rank wraps to its
+        opposite face. Take the periodicity away and the ring opens into a chain: <code>r0</code>
+        and <code>r3</code> would own five halo faces instead of six, and a fault on rack 2 could
+        not reach <code>r0</code> at all. The shape of this diagram is the boundary condition.</p>
     </div>
 
     <div class="card"><h2>The three meshes</h2><div class="scroll"><table>

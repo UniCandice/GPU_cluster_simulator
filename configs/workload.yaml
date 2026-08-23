@@ -16,7 +16,14 @@
 # The barrier relationship holds by construction:
 #     iteration_time = max(rank arrival times) + collective_comm_time + output_time
 
-name: cfd-lid-driven-cavity
+# Descriptive only -- nothing reads this field. The geometry that actually
+# matters is set by the periodic wrap in mesh.partition(): a triply periodic
+# cube, which is what makes Taylor-Green the honest label here. Every rank has
+# six neighbours and none sits on a boundary. A walled case (a lid-driven
+# cavity, or Rayleigh-Benard with its plates in z) would contradict that: ranks
+# on the boundary would have five neighbours, and the +/-z rack ring would open
+# into a chain.
+name: cfd-taylor-green-vortex
 iterations: 1000
 output_interval: 100
 

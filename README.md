@@ -82,6 +82,12 @@ HALO_EXCHANGE  →  COMPUTE  →  ALLREDUCE  →  [OUTPUT every 100 steps]
 preceded by a one-off `DATA_LOAD`. 1000 timesteps. The CFD framing exists to motivate domain
 decomposition, which is the actual subject.
 
+The case is a **Taylor–Green vortex** — a cube, periodic on all three axes. That is not decoration:
+it is the geometry the partitioner actually implements, so every rank owns exactly six halo faces
+and none sits on a wall. A walled case (a lid-driven cavity, or Rayleigh–Bénard with its plates in
+z) would give boundary ranks five faces and hand healthy runs a load imbalance that has nothing to
+do with partitioning — destroying the control the whole straggler study is measured against.
+
 The barrier relationship holds by construction:
 
 ```
