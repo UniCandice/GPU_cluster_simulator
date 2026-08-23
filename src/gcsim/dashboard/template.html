@@ -91,21 +91,14 @@ header { border-bottom:1px solid var(--border); padding-bottom:16px; margin-bott
 .ctl label { display:block; font-size:11px; text-transform:uppercase;
              letter-spacing:.07em; color:var(--muted); margin-bottom:6px; font-weight:600; }
 .pills { display:flex; flex-wrap:wrap; gap:5px; }
-/*  Scenario always takes its own row, whether it holds six pills or the line
-    explaining why it holds none. Left to flex-wrap it sits beside the mesh
-    pills when narrow and drops below them when wide, so the tab bar moves as
-    you switch tabs -- the control keeps its place instead.  */
+/*  Scenario always takes its own row. Left to flex-wrap it sits beside the mesh
+    pills at wide viewports and drops below them at narrow ones, so the tab bar
+    moves as the window resizes. Pinned, the control keeps its place.  */
 #scenwrap { flex:1 0 100%; }
 .pill { border:1px solid var(--border); background:var(--surface); color:var(--ink-2);
         padding:5px 11px; border-radius:7px; cursor:pointer; font:inherit; font-size:12.5px;
         line-height:1.3; transition:background .12s,border-color .12s; }
 .pill:hover { background:var(--surface-2); }
-/*  Stands in for the pills on tabs where no scenario applies. Matches their
-    vertical metrics so the controls row keeps its height between tabs, and is
-    muted so it reads as an annotation rather than a disabled control someone
-    should keep trying to click.  */
-.ctl-note { display:inline-block; padding:5px 0; font-size:12.5px; line-height:1.3;
-            color:var(--muted); border:1px solid transparent; }
 .pill[aria-pressed="true"] { background:var(--ink); color:var(--page);
                              border-color:var(--ink); font-weight:560; }
 .tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:1px solid var(--border);
@@ -554,16 +547,6 @@ function legend(items) {
 const TABS = ["Overview", "Timeline", "Ranks", "Mesh & partitioning",
               "Telemetry & fabric", "Diagnosis"];
 
-/*  Tabs where picking a scenario means nothing -- and the two mean nothing for
-    different reasons, which is worth saying rather than blurring into one
-    message. Overview already has all six on screen. Mesh & partitioning is
-    geometry, which no injection changes, and its measured charts come from the
-    healthy runs alone (build.py only collects `healthy_summaries`) -- which is
-    the actual reason those bars never move when you inject a fault.  */
-const SCEN_NOTE = {
-  0: "All six &mdash; compared side by side below.",
-  3: "Identical in every run &mdash; charts here use the healthy baseline.",
-};
 const state = {mesh: DATA.default_mesh, scenario: "straggler", tab: 0, rankMetric: "wait"};
 
 /* The whole view is addressable: #tab=2&scenario=thermal&mesh=fine&metric=temperature.
@@ -623,23 +606,19 @@ function renderChrome() {
   mesh.onclick = e => { const b = e.target.closest("[data-mesh]"); if (!b) return;
                         state.mesh = b.dataset.mesh; render(); };
 
-  //  Two tabs have no scenario to pick, for genuinely different reasons, so they
-  //  say so rather than having the control vanish. Hiding it outright moved the
-  //  whole controls row and read as a bug -- the reader's first thought is "did
-  //  I break it?", not "this must not apply here". `state.scenario` is left
-  //  alone throughout, so a detour through either tab does not lose their place.
+  //  Every tab gets the full control, always. Overview shows all six scenarios
+  //  at once and Mesh & partitioning is scenario-independent geometry, so on
+  //  those two the selection changes nothing on screen -- but the control still
+  //  belongs there. Removing it, or greying it out, made the chrome change shape
+  //  as you moved between tabs, which reads as a fault in the page rather than a
+  //  property of the tab. The selection is not wasted either: it carries over,
+  //  so picking a scenario here means it is already chosen on Timeline or Ranks.
   const sc = document.getElementById("scensel");
-  const note = SCEN_NOTE[state.tab];
-  if (note) {
-    sc.innerHTML = `<span class="ctl-note">${note}</span>`;
-    sc.onclick = null;
-  } else {
-    sc.innerHTML = DATA.scenarios.map(s =>
-      `<button class="pill" data-scen="${s.name}" aria-pressed="${s.name === state.scenario}">` +
-      `${s.label}</button>`).join("");
-    sc.onclick = e => { const b = e.target.closest("[data-scen]"); if (!b) return;
-                        state.scenario = b.dataset.scen; render(); };
-  }
+  sc.innerHTML = DATA.scenarios.map(s =>
+    `<button class="pill" data-scen="${s.name}" aria-pressed="${s.name === state.scenario}">` +
+    `${s.label}</button>`).join("");
+  sc.onclick = e => { const b = e.target.closest("[data-scen]"); if (!b) return;
+                      state.scenario = b.dataset.scen; render(); };
 
   const tabs = document.getElementById("tabs");
   tabs.innerHTML = TABS.map((t, i) =>
