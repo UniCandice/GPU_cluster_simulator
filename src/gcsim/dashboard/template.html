@@ -705,8 +705,10 @@ function renderChrome() {
      <code>${state.scenario}</code> &times; <code>${state.mesh}</code> run on disk used
      <b>${ranGpus}</b> of ${m.n_ranks} GPUs, but <code>workload.yaml</code> now configures
      <b>${cfgGpus}</b> &mdash; everything below shows the old run, including any fault target
-     the current allocation would have moved. Regenerate it:
-     <code>python -m gcsim run --scenario ${state.scenario} --mesh ${state.mesh}</code></div>`;
+     the current allocation would have moved. Regenerate <em>this page's</em> run &mdash; the
+     seed matters, a different seed regenerates a different page:
+     <code>python -m gcsim run --scenario ${state.scenario} --mesh ${state.mesh}
+     --seed ${m.seed}</code></div>`;
 }
 
 /* --- tab 0: overview ------------------------------------------------------ */
