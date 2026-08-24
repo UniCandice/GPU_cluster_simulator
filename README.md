@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 103 tests, ~50 s
+python -m pytest -q               # 116 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -291,7 +291,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              103 tests
+tests/              116 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
@@ -334,7 +334,12 @@ Beyond the usual unit coverage, the tests that carry the argument:
 
 ## Assumptions
 
-- **One rank per GPU**, single tenant. No other job competes for the cluster.
+- **One rank per GPU, single job.** No other job competes for the cluster -- but the job no
+  longer has to *be* the cluster: an optional `allocation` block in `workload.yaml` runs it on
+  a subset (`n_ranks`, optionally restricted to listed `racks` or `nodes`), with the existing
+  `placement` strategy distributing the ranks over that pool. Unallocated GPUs sit visibly
+  idle in telemetry -- idle power, near-inlet temperature, ~0% utilisation -- rather than
+  disappearing. Absent, the job occupies every GPU, byte-for-byte the historical behaviour.
 - The domain is **triply periodic**, so every rank has exactly six neighbours and none is privileged
   by sitting on a wall. Any imbalance therefore comes from partitioning alone.
 - `seconds_per_cell_update` represents a full outer timestep *inclusive of all 20 inner

@@ -923,9 +923,13 @@ function tabRanks() {
   document.getElementById("view").innerHTML = `
     <div class="card">
       <h2>Rank &times; time</h2>
-      <p class="sub">128 ranks down, wall-clock across. Rank order follows the decomposition, so
-        ranks 0&ndash;7 share a node and ranks 0&ndash;31 share a rack &mdash;
-        <b>a single bad GPU is one line, a rack fault is a solid block of 32.</b></p>
+      <p class="sub">${rk.gpu_ids.length} ranks down, wall-clock across. Rank order follows the
+        decomposition${rk.gpu_ids.length === 128
+          ? `, so ranks 0&ndash;7 share a node and ranks 0&ndash;31 share a rack &mdash;
+             <b>a single bad GPU is one line, a rack fault is a solid block of 32.</b>`
+          : ` over the ${rk.gpu_ids.length} allocated GPUs &mdash;
+             <b>a single bad GPU is one line.</b> Rack side-labels assume a full
+             cluster and are approximate for a subset job.`}</p>
       <div class="pills" id="metricsel" style="margin:10px 0 12px">
         ${Object.entries(metrics).map(([k, v]) =>
           `<button class="pill" data-metric="${k}" aria-pressed="${k === state.rankMetric}">${v.label}</button>`).join("")}

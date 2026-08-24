@@ -171,12 +171,20 @@ def _rank_block(rank: pd.DataFrame, gpu: pd.DataFrame, runtime: float,
     wait /= np.maximum(count, 1.0)
 
     #  Occupancy and temperature come from GPU telemetry, already on wall time.
-    gpu_ids = sorted(gpu["gpu_id"].unique())
+    #  Row order is the run's own rank -> GPU map, read back from the frame,
+    #  NOT every GPU in the telemetry: a subset job leaves idle GPUs in
+    #  telemetry_gpu with no row in a rank-indexed heatmap to land in, and
+    #  sorting ids only agreed with rank order while the job was the whole
+    #  cluster under packed placement anyway.
+    first = rank[rank["iteration"] == rank["iteration"].min()]
+    gpu_ids = first.sort_values("rank_id")["gpu_id"].tolist()
     order = {g: i for i, g in enumerate(gpu_ids)}
     occ = np.zeros((n_ranks, n_bins))
     temp = np.zeros((n_ranks, n_bins))
     for gid, grp in gpu.groupby("gpu_id"):
-        i = order[gid]
+        i = order.get(gid)
+        if i is None:                     # idle GPU: no rank, no row
+            continue
         t = grp["timestamp"].to_numpy()
         occ[i] = _bin_series(t, grp["sm_occupancy_pct"].to_numpy(), edges)
         temp[i] = _bin_series(t, grp["temperature_c"].to_numpy(), edges)
@@ -213,7 +221,13 @@ def _telemetry_block(frames: dict[str, pd.DataFrame], runtime: float,
         clock[rack] = _r(_bin_series(t, agg["clock_mhz"].to_numpy(), edges), 1)
         power[rack] = _r(_bin_series(t, agg["power_w"].to_numpy(), edges), 1)
 
-    fleet = gpu.groupby("timestamp")[["utilization_pct", "sm_occupancy_pct"]].mean()
+    #  Fleet means cover the GPUs the job runs on. Averaging 96 idle GPUs
+    #  into a 32-rank job's occupancy line would flatten every signal the
+    #  page exists to show. At full allocation the filter passes everything
+    #  and the numbers are unchanged.
+    allocated = set(frames["rank_performance"]["gpu_id"].unique())
+    fleet = (gpu[gpu["gpu_id"].isin(allocated)]
+             .groupby("timestamp")[["utilization_pct", "sm_occupancy_pct"]].mean())
     ft = fleet.index.to_numpy()
     throttled = gpu.groupby("timestamp")["throttled"].sum()
 
@@ -521,7 +535,10 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
                        f"{cc.gpus_per_node} GPUs = {cc.n_gpus} ranks",
             "gpu_model": cc.gpu.model,
             "workload": f"{bundle.workload.iterations} timesteps, field output every "
-                        f"{bundle.workload.output_interval}",
+                        f"{bundle.workload.output_interval}"
+                        + (f", {bundle.workload.allocation.n_ranks} of {cc.n_gpus} GPUs "
+                           f"({bundle.workload.placement})"
+                           if bundle.workload.allocation else ""),
             "sample_interval_s": cc.telemetry.sample_interval_s,
             "slowdown_c": cc.gpu.thermal_slowdown_c,
             "n_ranks": cc.n_gpus,
