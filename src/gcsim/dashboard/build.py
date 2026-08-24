@@ -34,8 +34,8 @@ from gcsim.config import load_config
 from gcsim.mesh import DIRECTION_NAMES, partition
 from gcsim.metrics import (STRAGGLER_DUTY_FLOOR, counter_conservation,
                            mesh_scaling_table, straggler_attribution)
-from gcsim.placement import KIND_NAMES, place
-from gcsim.routing import Router
+from gcsim.placement import KIND_CODES, KIND_NAMES, place
+from gcsim.routing import CROSS_DOMAIN, Router
 from gcsim.telemetry import read_run
 from gcsim.topology import build_cluster
 
@@ -484,32 +484,55 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
         "cross_domain": 2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us,
     }
 
+    #  Geometry follows the JOB, not the cluster. With an allocation configured,
+    #  the decomposition, the faces, and which racks exchange with which are all
+    #  properties of the subset actually running -- describing the 128-rank
+    #  layout under a 32-rank run's charts would be the config asserting a
+    #  topology nobody is using. Without an allocation this is exactly the old
+    #  full-cluster computation.
+    alloc = bundle.workload.allocation
+    job_ranks = alloc.n_ranks if alloc else cc.n_gpus
+
     partitions = {}
     for name, mesh in bundle.meshes.items():
-        d = partition(mesh, cc.n_gpus, preferred_first_extent=cc.gpus_per_node)
-        placement = place(cluster, d, router, strategy=bundle.workload.placement)
+        d = partition(mesh, job_ranks, preferred_first_extent=cc.gpus_per_node)
+        placement = place(cluster, d, router, strategy=bundle.workload.placement,
+                          allocation=alloc)
+        rack_of = np.array([cluster.gpu(int(g)).rack_index
+                            for g in placement.rank_to_gpu])
 
         #  Averaged over ranks, not read off rank 0: on a ragged mesh the faces
         #  differ between ranks and quoting one of them would misreport the rest.
+        #  Link class per direction: uniform across ranks for the shipped full
+        #  layout, but a subset placement can put the same face on NVLink for
+        #  one rank and across a rack for another -- reported as "mixed" rather
+        #  than whichever rank 0 happened to get.
         face_cells = d.face_cells.mean(axis=0)
         total_face = float(face_cells.sum()) or 1.0
         faces = []
         for i, direction in enumerate(DIRECTION_NAMES):
-            kind = KIND_NAMES[int(placement.neighbour_kind[0, i])]
+            kinds = {int(k) for k in placement.neighbour_kind[:, i]}
+            kind = KIND_NAMES[kinds.pop()] if len(kinds) == 1 else "mixed"
             faces.append({
                 "dir": direction,
                 "cells": round(float(face_cells[i]), 1),
                 "kind": kind,
-                "latency_us": round(latency_us[kind], 1),
+                "latency_us": round(latency_us[kind], 1) if kind in latency_us else None,
                 "byte_share": round(100.0 * float(face_cells[i]) / total_face, 2),
             })
 
-        #  Which rack each rack's +z face reaches. The decomposition is triply
-        #  periodic, so this closes into a ring -- which is the reason a fault on
-        #  one rack lands on a rack that is not its neighbour in the id order.
-        per_rack = cc.gpus_per_rack
-        z_ring = [int(d.neighbours[k * per_rack][5]) // per_rack
-                  for k in range(cc.n_gpus // per_rack)]
+        #  Which rack pairs this job's halo actually joins, and which racks host
+        #  ranks at all. For the full cluster the pairs close into the familiar
+        #  ring; a subset spanning two racks yields one link and two idle racks,
+        #  and the drawing should say so instead of implying a cycle.
+        cross = KIND_CODES[CROSS_DOMAIN]
+        links: set[tuple[int, int]] = set()
+        for r in range(d.n_ranks):
+            for dd in range(placement.neighbour_kind.shape[1]):
+                if placement.neighbour_kind[r, dd] == cross:
+                    a, b = int(rack_of[r]), int(rack_of[d.neighbours[r, dd]])
+                    if a != b:
+                        links.add((min(a, b), max(a, b)))
 
         partitions[name] = {
             "grid": list(d.grid),
@@ -520,7 +543,9 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
             "surface_to_volume": round(d.surface_to_volume, 5),
             "extents": [int(v) for v in d.extents[0]],
             "faces": faces,
-            "z_ring": z_ring,
+            "n_racks": cc.racks,
+            "active_racks": sorted({int(x) for x in rack_of}),
+            "rack_links": [list(p) for p in sorted(links)],
             "halo_mb_per_iter": round(
                 float(d.halo_bytes_per_iteration().sum(axis=1).mean()) / 1e6, 2),
             "label": mesh.label,

@@ -7,6 +7,14 @@
 #
 # The `fault` flag is a ground-truth LABEL used to score the diagnosis view. It
 # is never consumed by the simulator itself.
+#
+# Targeted injections (`target: {rack,node,gpu}` or `target: {rack}`) honour
+# the workload allocation: if the named hardware hosts no rank of the job, a
+# replacement is drawn from the allocated set with a seed-keyed stream --
+# random but reproducible -- and the event payload records `retargeted_from`.
+# A fault injected into an idle GPU would be a fault into vacuum: the run
+# would complete, nothing would happen, and the FAULT label would sit over a
+# perfectly healthy job.
 
 scenarios:
 

@@ -196,3 +196,114 @@ def test_summary_records_the_allocation(subset_run):
     assert s["n_ranks"] == 32
     assert s["allocated_gpus"] == 32
     assert s["placement"] == "scatter"
+
+
+# ---------------------------------------------------------------------------
+# targeted injections honour the allocation
+# ---------------------------------------------------------------------------
+
+def test_targeted_gpu_fault_retargets_into_the_allocation(bundle):
+    """The yaml aims at r3n1g2; the job runs on racks 0-1.
+
+    Without retargeting the injection lands on an idle GPU, the run completes
+    with the fault doing nothing observable, and the ground-truth FAULT label
+    sits over a perfectly healthy job -- verified as exactly what happened
+    before this change. The replacement is drawn from the seed, so it is
+    random but reproducible, and the payload records what the yaml wanted.
+    """
+    from gcsim.engine.simulator import Simulator
+
+    cfg = _subset_cfg(bundle, "gpu_degradation", "coarse", 9, n_ranks=32,
+                      racks=(0, 1))
+    out = Simulator(cfg).run()
+    fired = out.frames["events"]
+    payload = json.loads(
+        fired[fired["event_type"] == "INJECTION_APPLIED"].iloc[0]["payload"])
+
+    allocated = set(out.frames["rank_performance"]["gpu_id"].unique())
+    assert payload["retargeted_from"] == "r3n1g2"
+    assert payload["gpu_id"] in allocated
+
+    #  Same seed, same draw -- the retarget is a property of the seed.
+    out2 = Simulator(_subset_cfg(bundle, "gpu_degradation", "coarse", 9,
+                                 n_ranks=32, racks=(0, 1))).run()
+    fired2 = out2.frames["events"]
+    payload2 = json.loads(
+        fired2[fired2["event_type"] == "INJECTION_APPLIED"].iloc[0]["payload"])
+    assert payload2["gpu_id"] == payload["gpu_id"]
+
+    #  ...and the fault is now real: the chosen GPU throttles for RELIABILITY.
+    gpu = out.frames["telemetry_gpu"]
+    throttled = gpu[gpu["throttled"]]
+    assert set(throttled["gpu_id"]) == {payload["gpu_id"]}
+    assert set(throttled["throttle_reason"]) == {"RELIABILITY"}
+
+
+def test_targeted_rack_fault_retargets_into_the_allocation(bundle):
+    """thermal aims at rack 1; the job runs on rack 0 alone."""
+    from gcsim.engine.simulator import Simulator
+
+    cfg = _subset_cfg(bundle, "thermal", "coarse", 9, n_ranks=32, racks=(0,))
+    out = Simulator(cfg).run()
+    fired = out.frames["events"]
+    payload = json.loads(
+        fired[fired["event_type"] == "INJECTION_APPLIED"].iloc[0]["payload"])
+    assert payload["retargeted_from"] == "r1"
+    assert payload["rack_id"] == "r0"          # the only allocated rack
+
+
+def test_full_allocation_never_retargets(runs):
+    """No allocation block -> the yaml target is used untouched, bit for bit."""
+    events = runs["gpu_degradation"].frames["events"]
+    fired = events[events["event_type"] == "INJECTION_APPLIED"]
+    payload = json.loads(fired.iloc[0]["payload"])
+    assert payload["gpu_id"] == "r3n1g2"
+    assert "retargeted_from" not in payload
+
+
+# ---------------------------------------------------------------------------
+# job-aware geometry in the dashboard payload
+# ---------------------------------------------------------------------------
+
+def test_payload_geometry_follows_the_allocation(bundle, tmp_path, monkeypatch):
+    """With an allocation configured, the Mesh tab describes the job.
+
+    partitions[] used to be computed for 128 ranks unconditionally, so a
+    32-rank run's charts showed the full-cluster subdomain and a four-rack
+    ring with every rack implicitly active.
+    """
+    from dataclasses import replace as dc_replace
+    import gcsim.dashboard.build as build_mod
+    from gcsim.config import AllocationConfig
+    from gcsim.scenarios import run_scenario
+
+    #  The user's real configuration: four nodes spanning racks 0 and 1, with
+    #  exactly as many ranks as the pool holds, so both racks host ranks.
+    #  (A racks-based pool under packed placement would take the prefix and
+    #  land entirely in rack 0 -- correct, but not the case being pinned.)
+    alloc = AllocationConfig(n_ranks=32, nodes=("r0n0", "r0n1", "r1n0", "r1n1"))
+    b2 = dc_replace(bundle, workload=dc_replace(bundle.workload, allocation=alloc))
+    run_scenario("healthy", mesh="coarse", seed=9, bundle=b2,
+                 out_dir=tmp_path / "runs")
+
+    monkeypatch.setattr(build_mod, "load_config", lambda *a, **k: b2)
+    p = build_mod.build_payload(tmp_path / "runs", seed=9)
+
+    geo = p["partitions"]["coarse"]
+    assert geo["active_racks"] == [0, 1]
+    assert all(a in (0, 1) and b in (0, 1) for a, b in geo["rack_links"])
+    #  32 ranks over racks 0-1, not the 128-rank grid.
+    import math
+    assert math.prod(geo["grid"]) == 32
+    assert geo["n_racks"] == bundle.cluster.racks
+
+
+def test_payload_geometry_at_full_allocation_is_the_familiar_ring(bundle):
+    from gcsim.dashboard.build import build_payload
+
+    p = build_payload("runs", seed=42)
+    geo = p["partitions"]["medium"]
+    assert geo["active_racks"] == [0, 1, 2, 3]
+    assert geo["rack_links"] == [[0, 1], [0, 3], [1, 2], [2, 3]]   # the 4-cycle
+    assert [f["kind"] for f in geo["faces"]] == \
+        ["intranode"] * 2 + ["intra_domain"] * 2 + ["cross_domain"] * 2

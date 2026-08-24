@@ -855,15 +855,22 @@ function describeStructure(matrix, gpuIds, gpusPerRack, metric) {
 
   if (out.length) {
     const contiguous = out.length > 1 && out[out.length - 1] - out[0] + 1 === out.length;
-    const racks = [...new Set(out.map(y => Math.floor(y / gpusPerRack)))];
+    //  Rack from the GPU id, not from row / 32: rank order only maps onto
+    //  32-row rack blocks for a full packed job, and this readout also serves
+    //  subset allocations where a rack may hold any number of rows.
+    const rackOf = y => gpuIds[y].slice(0, gpuIds[y].indexOf("n"));
+    const racks = [...new Set(out.map(rackOf))];
+    const rackRows = r => gpuIds.filter(id => id.slice(0, id.indexOf("n")) === r).length;
     const above = rowMean[out[0]] > centre;
     const where = out.length === 1
       ? "rank " + out[0] + " (<code>" + gpuIds[out[0]] + "</code>)"
       : out.length + " ranks" +
         (contiguous && racks.length === 1
-          ? " &mdash; a contiguous block, the whole of rack r" + racks[0]
+          ? (out.length === rackRows(racks[0])
+              ? " &mdash; a contiguous block, the whole of rack " + racks[0]
+              : " &mdash; a contiguous block in rack " + racks[0])
           : contiguous ? " &mdash; a contiguous block"
-                       : " across rack(s) " + racks.map(r => "r" + r).join(", "));
+                       : " across rack(s) " + racks.join(", "));
     return {kind: "rank", html:
       "<b>Rank-localised.</b> " + where + " sit " + (above ? "above" : "below") +
       " the fleet. Structure in the vertical direction means the cause is attached to " +
@@ -928,16 +935,34 @@ function tabRanks() {
           ? `, so ranks 0&ndash;7 share a node and ranks 0&ndash;31 share a rack &mdash;
              <b>a single bad GPU is one line, a rack fault is a solid block of 32.</b>`
           : ` over the ${rk.gpu_ids.length} allocated GPUs &mdash;
-             <b>a single bad GPU is one line.</b> Rack side-labels assume a full
-             cluster and are approximate for a subset job.`}</p>
+             <b>a single bad GPU is one line.</b> The rack rail is sized by how
+             many of this job's ranks each rack actually hosts.`}</p>
       <div class="pills" id="metricsel" style="margin:10px 0 12px">
         ${Object.entries(metrics).map(([k, v]) =>
           `<button class="pill" data-metric="${k}" aria-pressed="${k === state.rankMetric}">${v.label}</button>`).join("")}
       </div>
       <div style="display:grid;grid-template-columns:48px 1fr;gap:8px;align-items:stretch">
-        <div class="rackrail" style="grid-template-rows:repeat(${meta.racks},1fr)">
-          ${Array.from({length: meta.racks}, (_, i) => `<div>rack r${i}</div>`).join("")}
-        </div>
+        ${(() => {
+          //  The rail labels the racks the ROWS actually belong to, derived from
+          //  each rank's own GPU id -- not from an assumed 32-ranks-per-rack
+          //  layout, which is only true for a full packed job. A subset on two
+          //  racks gets two bands sized by their rank counts. If a scatter
+          //  allocation interleaves racks so finely that the grouping shatters,
+          //  the rail goes blank: no labels beat wrong labels.
+          const rackOf = id => id.slice(0, id.indexOf("n"));
+          const groups = [];
+          rk.gpu_ids.forEach(id => {
+            const rr = rackOf(id);
+            if (groups.length && groups[groups.length - 1].rack === rr)
+              groups[groups.length - 1].n++;
+            else groups.push({rack: rr, n: 1});
+          });
+          return groups.length <= 8
+            ? `<div class="rackrail" style="grid-template-rows:${
+                 groups.map(g => `${g.n}fr`).join(" ")}">
+                 ${groups.map(g => `<div>rack ${g.rack}</div>`).join("")}</div>`
+            : `<div class="rackrail"></div>`;
+        })()}
         <div class="hm" id="c-hm"></div>
       </div>
       <p class="structure">${structure.html}</p>
@@ -1000,13 +1025,18 @@ function tabMesh() {
   //  topology the model is not actually running.
   const KINDS = {intranode:    ["same node",    "NVLink"],
                  intra_domain: ["same rack",    "via leaf"],
-                 cross_domain: ["across racks", "via spine"]};
+                 cross_domain: ["across racks", "via spine"],
+                 //  A subset placement can put the same face on different link
+                 //  classes for different ranks; the payload says so rather
+                 //  than quoting whichever rank 0 happened to get.
+                 mixed:        ["varies by rank", "mixed"]};
   const faceRows = [0, 2, 4].map(i => {
     const f = p.faces[i], k = KINDS[f.kind];
     const share = f.byte_share + p.faces[i + 1].byte_share;
     return `<tr><td class="hl">&plusmn;${f.dir.slice(1)}</td>
       <td>${fmt(f.cells, 0)}</td><td>${k[0]}</td><td><b>${k[1]}</b></td>
-      <td>~${fmt(f.latency_us, 0)} &micro;s</td><td>${fmt(share, 0)}%</td></tr>`;
+      <td>${f.latency_us == null ? "&mdash;" : `~${fmt(f.latency_us, 0)} &micro;s`}</td>
+      <td>${fmt(share, 0)}%</td></tr>`;
   }).join("");
 
   //  Which rack, if any, has actually lost uplinks in the SELECTED run. Read off
@@ -1020,49 +1050,59 @@ function tabMesh() {
   const degraded = conservation.filter(c => c.active_uplinks < fullUplinks)
                                .map(c => +c.domain_id.slice(1));
 
-  //  The ring is drawn from the payload's z_ring -- the rack each rack's +z face
-  //  actually reaches -- rather than from an assumed 0-1-2-3 cycle, so it stays
-  //  honest if the grid or the placement ever changes shape.
-  //  Colour is used semantically (--critical for a degraded link) and never to
-  //  encode a magnitude: the ramp reverses between themes, these tokens do not.
-  const ring = p.z_ring, nR = ring.length;
+  //  The drawing is the payload's rack_links -- the rack pairs THIS JOB's halo
+  //  actually joins -- rather than an assumed 0-1-2-3 cycle. For a full job the
+  //  links close into the familiar ring; a subset spanning two racks yields one
+  //  edge, and the racks hosting no ranks render hollow rather than pretending
+  //  to participate. Colour stays semantic (--critical for a degraded link),
+  //  never a magnitude: the ramp reverses between themes, these tokens do not.
+  const nR = p.n_racks, links = p.rack_links;
+  const active = new Set(p.active_racks);
   const isBad = k => degraded.includes(k);
-  const at = ring.map((_, k) => {
+  const at = Array.from({length: nR}, (_, k) => {
     const a = -Math.PI / 2 + k * 2 * Math.PI / nR;
     return [110 + 60 * Math.cos(a), 92 + 60 * Math.sin(a)];
   });
   //  A degraded uplink slows every exchange that enters or leaves that rack, so
-  //  the racks left untouched are those with no face onto it -- walk the ring
-  //  both ways from each degraded rack rather than assuming who its partners are.
+  //  the racks left untouched are those with no link onto it -- read straight
+  //  off the job's own rack adjacency rather than an assumed ring.
   const slowed = new Set();
   degraded.forEach(d => {
-    slowed.add(d).add(ring[d]);
-    ring.forEach((to, from) => { if (to === d) slowed.add(from); });
+    slowed.add(d);
+    links.forEach(([a, b]) => { if (a === d) slowed.add(b); if (b === d) slowed.add(a); });
   });
-  const clean = ring.map((_, k) => k).filter(k => !slowed.has(k));
+  const clean = p.active_racks.filter(k => !slowed.has(k));
   const racks = ks => [...ks].sort((a, b) => a - b).map(k => `<code>r${k}</code>`).join(", ");
+  const idleRacks = Array.from({length: nR}, (_, k) => k).filter(k => !active.has(k));
 
   const ringSvg = `
     <svg viewBox="0 0 220 205" width="100%" height="205" role="img"
-         aria-label="the four racks form a ring through their plus and minus z halo exchanges">
-      ${ring.map((to, from) => {
+         aria-label="which racks this job's cross-rack halo exchanges actually join">
+      ${links.map(([from, to]) => {
         const bad = isBad(from) || isBad(to);
         return `<line x1="${at[from][0].toFixed(1)}" y1="${at[from][1].toFixed(1)}"
           x2="${at[to][0].toFixed(1)}" y2="${at[to][1].toFixed(1)}"
           stroke="${bad ? "var(--critical)" : "var(--axis)"}"
           stroke-width="${bad ? 2.5 : 1.5}" stroke-dasharray="${bad ? "5 3" : "none"}"/>`;
       }).join("")}
-      ${at.map(([x, y], k) => `
+      ${at.map(([x, y], k) => active.has(k) ? `
         <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="17"
                 fill="${isBad(k) ? "var(--critical)" : "var(--surface-2)"}"
                 stroke="var(--axis)" stroke-width="1"/>
         <text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="middle"
               font-size="12" font-weight="600" font-family="var(--font-data)"
-              fill="${isBad(k) ? "var(--surface)" : "var(--ink)"}">r${k}</text>`).join("")}
+              fill="${isBad(k) ? "var(--surface)" : "var(--ink)"}">r${k}</text>` : `
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="17" fill="none"
+                stroke="var(--axis)" stroke-width="1" stroke-dasharray="3 3" opacity=".55"/>
+        <text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="middle"
+              font-size="12" font-family="var(--font-data)" opacity=".55"
+              fill="var(--muted)">r${k}</text>`).join("")}
       <text x="110" y="196" text-anchor="middle" font-size="10.5" fill="var(--muted)">
         ${degraded.length
-          ? `&plusmn;z exchanges. Dashed: the two a degraded ${degraded.map(k => "r" + k).join(", ")} uplink slows.`
-          : "&plusmn;z exchanges. Every rack keeps all its uplinks in this run."}</text>
+          ? `Cross-rack exchanges. Dashed red: slowed by the degraded ${degraded.map(k => "r" + k).join(", ")} uplink.`
+          : idleRacks.length
+            ? `Cross-rack exchanges. Hollow racks host no ranks in this run.`
+            : "&plusmn;z exchanges. Every rack keeps all its uplinks in this run."}</text>
     </svg>`;
 
   document.getElementById("view").innerHTML = `
@@ -1122,27 +1162,40 @@ function tabMesh() {
         </table></div>
         <div>${ringSvg}</div>
       </div>
+      ${p.faces[0].kind === "intranode" && p.faces[2].kind === "intra_domain"
+          && p.faces[4].kind === "cross_domain" ? `
       <p class="note">The subdomain is ${p.extents.join(" &times; ")} cells, so the
         <b>&plusmn;x</b> faces are ${fmt(p.faces[0].cells / p.faces[2].cells, 0)}&times; the area
         of the others &mdash; and those are the two that stay inside a node on NVLink. Half the
         ${fmt(p.halo_mb_per_iter, 0)} MB each rank exchanges per timestep never leaves its host,
         and only a quarter of it ever crosses a spine. Put the largest faces on the slowest link
         instead and the same mesh on the same cluster runs materially slower; that is what the
-        <code>scatter</code> placement in <code>placement.py</code> exists to demonstrate.</p>
+        <code>scatter</code> placement in <code>placement.py</code> exists to demonstrate.</p>`
+      : `<p class="note">The subdomain is ${p.extents.join(" &times; ")} cells and each rank
+        exchanges ${fmt(p.halo_mb_per_iter, 0)} MB per timestep. This allocation's process grid
+        does not line up with the node/rack tiers the way the full layout does &mdash; a face
+        marked <b>mixed</b> rides NVLink for some ranks and crosses a rack for others, so the
+        clean faces-to-tiers story above holds only in aggregate here.</p>`}
       ${degraded.length && clean.length ? `
       <p class="note"><b>The ring is why this rack fault surfaces somewhere unexpected.</b> The
         &plusmn;z neighbours close into a cycle, so degrading ${racks(degraded)}'s uplink slows
-        only the two exchanges that touch it. That leaves ${racks(slowed)} each carrying a slowed
+        only the exchanges that touch it. That leaves ${racks(slowed)} each carrying a slowed
         face and ${racks(clean)} carrying none. ${racks(clean)} then finishes early and spends the
         rest of the run waiting &mdash; so the wait band on the Ranks tab appears on
         ${racks(clean)}, not on the rack that failed. At a barrier you see a fault in whoever is
         <em>not</em> affected by it.</p>` : ""}
+      ${idleRacks.length === 0 ? `
       <p class="note"><b>That closing edge is the periodicity, not a drawing convention.</b> The
         domain is a triply periodic cube &mdash; a Taylor&ndash;Green vortex box &mdash; so
         <code>r3</code> wraps round to <code>r0</code> in z exactly as every rank wraps to its
         opposite face. Take the periodicity away and the ring opens into a chain: <code>r0</code>
         and <code>r3</code> would own five halo faces instead of six, and a fault on rack 2 could
-        not reach <code>r0</code> at all. The shape of this diagram is the boundary condition.</p>
+        not reach <code>r0</code> at all. The shape of this diagram is the boundary condition.</p>`
+      : `<p class="note"><b>This job occupies ${racks(p.active_racks)}</b>; the hollow racks host
+        no ranks and carry none of its halo traffic. The domain is still triply periodic &mdash;
+        every rank keeps six neighbours &mdash; but the wrap now closes over the allocated GPUs
+        rather than over the whole machine, so the cross-rack links above are the complete set
+        this job can be hurt through.</p>`}
     </div>
 
     ${study.length ? `<div class="card"><h2>${study.length === DATA.meshes.length
@@ -1203,7 +1256,11 @@ function tabTelemetry() {
 
   document.getElementById("view").innerHTML = `
     ${chartCard("Utilisation vs SM occupancy",
-      "Two channels most dashboards treat as one number. They are computed from different quantities here, and the gap between them is the point.")}
+      "Two channels most dashboards treat as one number. They are computed from different quantities here, and the gap between them is the point."
+      + ((r.summary.allocated_gpus ?? DATA.meta.n_ranks) < DATA.meta.n_ranks
+        ? ` Averaged over the ${r.summary.allocated_gpus} allocated GPUs; the other ${
+            DATA.meta.n_ranks - r.summary.allocated_gpus} sit idle at ~0% and are excluded.`
+        : ""))}
       ${legend([{name: "utilisation", color: C[0]}, {name: "SM occupancy", color: C[1]}])}
       <div class="chart" id="c-uo"></div>
       <p class="note">A rank blocked in a collective keeps a spin kernel resident, so
@@ -1214,7 +1271,7 @@ function tabTelemetry() {
 
     <div class="card">
       <h2>Per-rack GPU telemetry</h2>
-      <p class="sub">Averaged over the 32 GPUs in each rack. Every line is labelled at its
+      <p class="sub">Averaged over each rack's GPUs, idle ones included. Every line is labelled at its
         endpoint, so identity never depends on colour.</p>
       <div class="grid g3" style="margin-top:12px">
         <div><h3>Temperature (&deg;C)</h3><div class="chart" id="c-temp"></div></div>

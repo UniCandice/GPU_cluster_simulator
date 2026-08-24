@@ -65,9 +65,40 @@ class InjectionContext:
 # Handlers
 # ---------------------------------------------------------------------------
 
-def _target_gpu(ctx: InjectionContext):
+def _target_gpu(ctx: InjectionContext, kind: str):
+    """The GPU a targeted injection lands on, honouring the allocation.
+
+    The yaml names a fixed target, but a subset job may not be running anything
+    there -- and a fault injected into an idle GPU is a fault into vacuum: the
+    run completes, nothing observable happens, and the ground-truth label says
+    FAULT over a perfectly healthy job. When the configured target is outside
+    the allocated set, a replacement is drawn from that set with a seed-keyed
+    stream, so the choice is random but reproducible, and the injection payload
+    records what the yaml wanted so the substitution is observable in the event
+    trace rather than silent. With no allocation every GPU is in the set and
+    the yaml target is used untouched -- the historical behaviour, bit for bit.
+    """
     t = ctx.params["target"]
-    return ctx.cluster.gpus[f"r{t['rack']}n{t['node']}g{t['gpu']}"]
+    wanted = f"r{t['rack']}n{t['node']}g{t['gpu']}"
+    allocated = ctx.workload.allocated_gpu_ids
+    if not allocated or wanted in allocated:
+        return ctx.cluster.gpus[wanted], None
+    rng = derive_rng(ctx.seed, f"retarget:{kind}")
+    chosen = allocated[int(rng.integers(len(allocated)))]
+    return ctx.cluster.gpus[chosen], wanted
+
+
+def _target_rack(ctx: InjectionContext, kind: str) -> tuple[str, str | None]:
+    """Rack-tier version of `_target_gpu`: same rule, drawn over allocated racks."""
+    wanted = f"r{ctx.params['target']['rack']}"
+    allocated = ctx.workload.allocated_gpu_ids
+    if not allocated:
+        return wanted, None
+    racks = sorted({gid[: gid.index("n")] for gid in allocated})
+    if wanted in racks:
+        return wanted, None
+    rng = derive_rng(ctx.seed, f"retarget:{kind}")
+    return racks[int(rng.integers(len(racks)))], wanted
 
 
 @handler("gpu_throughput_derate")
@@ -78,9 +109,12 @@ def gpu_throughput_derate(ctx: InjectionContext) -> dict[str, Any]:
     GPU still boosts to its nominal clock, still reports ~100% utilisation, and
     is simply slower. Only the *job's* timing reveals it.
     """
-    gpu = _target_gpu(ctx)
+    gpu, retargeted = _target_gpu(ctx, "gpu_throughput_derate")
     gpu.throughput_derate = float(ctx.params["factor"])
-    return {"gpu_id": gpu.gpu_id, "throughput_derate": gpu.throughput_derate}
+    out = {"gpu_id": gpu.gpu_id, "throughput_derate": gpu.throughput_derate}
+    if retargeted:
+        out["retargeted_from"] = retargeted
+    return out
 
 
 def _plan_episodes(ctx: InjectionContext) -> list[dict[str, Any]]:
@@ -217,14 +251,17 @@ def gpu_reliability_degrade(ctx: InjectionContext) -> dict[str, Any]:
     reported clock cap (throttle_reason = RELIABILITY) and the occupancy drop on
     the victim, because stalled SMs are occupied but not retiring work.
     """
-    gpu = _target_gpu(ctx)
+    gpu, retargeted = _target_gpu(ctx, "gpu_reliability_degrade")
     gpu.memory_bandwidth_factor = float(ctx.params["memory_bandwidth_factor"])
     gpu.reliability_clock_cap = float(ctx.params["clock_cap"])
-    return {
+    out = {
         "gpu_id": gpu.gpu_id,
         "memory_bandwidth_factor": gpu.memory_bandwidth_factor,
         "reliability_clock_cap": gpu.reliability_clock_cap,
     }
+    if retargeted:
+        out["retargeted_from"] = retargeted
+    return out
 
 
 @handler("leaf_uplink_failure")
@@ -237,7 +274,7 @@ def leaf_uplink_failure(ctx: InjectionContext) -> dict[str, Any]:
     drops frames, which cost more goodput -- the degradation compounds, as it
     does on a real flapping link.
     """
-    rack_id = f"r{ctx.params['target']['rack']}"
+    rack_id, retargeted = _target_rack(ctx, "leaf_uplink_failure")
     keep = int(ctx.params["uplinks_active"])
     error_rate = float(ctx.params.get("error_rate", 5e-4))
     leaf = ctx.cluster.leaf_of(rack_id)
@@ -250,8 +287,11 @@ def leaf_uplink_failure(ctx: InjectionContext) -> dict[str, Any]:
             downed.append(port_id)
         else:
             port.error_rate = error_rate
-    return {"rack_id": rack_id, "uplinks_active": keep, "downed_ports": downed,
-            "survivor_error_rate": error_rate}
+    out = {"rack_id": rack_id, "uplinks_active": keep, "downed_ports": downed,
+           "survivor_error_rate": error_rate}
+    if retargeted:
+        out["retargeted_from"] = retargeted
+    return out
 
 
 @handler("cooling_degrade")
@@ -263,12 +303,16 @@ def cooling_degrade(ctx: InjectionContext) -> dict[str, Any]:
     from efficiency and the rack's own dissipation, and die temperature follows
     from that through the thermal lag.
     """
-    rack = ctx.cluster.racks[f"r{ctx.params['target']['rack']}"]
+    rack_id, retargeted = _target_rack(ctx, "cooling_degrade")
+    rack = ctx.cluster.racks[rack_id]
     target = float(ctx.params["efficiency"])
     nominal = ctx.cluster.cfg.cooling.nominal_efficiency
     rack.cooling_efficiency = nominal + (target - nominal) * ctx.progress
-    return {"rack_id": rack.rack_id, "cooling_efficiency": rack.cooling_efficiency,
-            "progress": ctx.progress}
+    out = {"rack_id": rack.rack_id, "cooling_efficiency": rack.cooling_efficiency,
+           "progress": ctx.progress}
+    if retargeted:
+        out["retargeted_from"] = retargeted
+    return out
 
 
 @handler("workload_output_change")

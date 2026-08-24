@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 119 tests, ~50 s
+python -m pytest -q               # 124 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -296,7 +296,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              119 tests
+tests/              124 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
@@ -344,7 +344,10 @@ Beyond the usual unit coverage, the tests that carry the argument:
   a subset (`n_ranks`, optionally restricted to listed `racks` or `nodes`), with the existing
   `placement` strategy distributing the ranks over that pool. Unallocated GPUs sit visibly
   idle in telemetry -- idle power, near-inlet temperature, ~0% utilisation -- rather than
-  disappearing. Absent, the job occupies every GPU, byte-for-byte the historical behaviour.
+  disappearing. Targeted faults honour the slice: if a scenario's configured target hosts no
+  rank, the injection retargets to a seed-chosen member of the allocated set and records the
+  substitution in the event trace, so a fault can never fire into an idle GPU and silently do
+  nothing. Absent, the job occupies every GPU, byte-for-byte the historical behaviour.
 - The domain is **triply periodic**, so every rank has exactly six neighbours and none is privileged
   by sitting on a wall. Any imbalance therefore comes from partitioning alone.
 - `seconds_per_cell_update` represents a full outer timestep *inclusive of all 20 inner
