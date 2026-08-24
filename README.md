@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 116 tests, ~50 s
+python -m pytest -q               # 119 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -41,6 +41,11 @@ python -m gcsim mesh-study                                    # the partitioning
 python -m gcsim matrix --seed 7                               # the full matrix at another seed
 python -m gcsim dashboard                                     # rebuild the HTML from runs/
 ```
+
+`run` and `matrix` also finish by building the dashboard for whatever `runs/` then holds and
+opening it -- a single scenario renders fine, with the unsimulated combinations greyed out.
+`--no-dashboard` writes the Parquet only; `--no-open` builds without launching a browser. A
+custom `--out` runs directory gets a sibling `dashboard/` of its own, never the repo's.
 
 ---
 
@@ -291,7 +296,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              116 tests
+tests/              119 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
