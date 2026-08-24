@@ -48,14 +48,17 @@ placement: packed
 # the pool's racks). Absent, the job occupies every GPU -- the historical
 # behaviour, bit for bit.
 #
-# Currently active: 64 ranks on eight nodes -- both nodes 0-1 of racks 0 and 1,
-# plus the whole of rack 2. Comment the block out to return to the full
-# 128-GPU job. Note the shipped runs/ and the README's results tables were
-# produced with the block absent; regenerating under this allocation will make
-# the dashboard flag any older full-cluster runs as predating the config.
-allocation:
-  n_ranks: 64
-  nodes: ["r0n0", "r0n1", "r1n0", "r1n1", "r2n0", "r2n1", "r2n2", "r2n3"]
+# Example (uncomment to activate): 64 ranks on eight nodes -- both nodes 0-1
+# of racks 0 and 1, plus the whole of rack 2, leaving rack 3 idle. The shipped
+# runs/ and the README's results tables were produced with the block absent;
+# runs made under a different allocation are flagged on the dashboard as
+# predating the current configuration.
+#
+# allocation:
+#   n_ranks: 64
+#   nodes: ["r0n0", "r0n1", "r1n0", "r1n1", "r2n0", "r2n1", "r2n2", "r2n3"]
+#
+# Pools can also be whole racks:  racks: [0, 1]
 
 # Other pool shapes:
 #   racks: [0, 1]            # restrict by whole racks instead of nodes
