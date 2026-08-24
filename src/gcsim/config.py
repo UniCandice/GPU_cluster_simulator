@@ -245,12 +245,44 @@ class MeshConfig:
 
 
 @dataclass(frozen=True)
+class AllocationConfig:
+    """Which slice of the fixed cluster the job occupies.
+
+    The cluster itself never changes shape; this only chooses how many of its
+    GPUs the job runs on and, optionally, which pool they are drawn from.
+    `racks` and `nodes` are mutually exclusive ways of restricting the pool;
+    with neither, the pool is the whole cluster. The `placement` strategy on
+    WorkloadConfig then distributes the ranks over that pool.
+    """
+    n_ranks: int
+    racks: tuple[int, ...] | None = None
+    nodes: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.racks is not None and self.nodes is not None:
+            raise ValueError("allocation: `racks` and `nodes` are mutually exclusive")
+        if self.n_ranks < 1:
+            raise ValueError(f"allocation: n_ranks must be >= 1, got {self.n_ranks}")
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "AllocationConfig":
+        return cls(
+            n_ranks=int(d["n_ranks"]),
+            racks=tuple(int(r) for r in d["racks"]) if "racks" in d else None,
+            nodes=tuple(str(n) for n in d["nodes"]) if "nodes" in d else None,
+        )
+
+
+@dataclass(frozen=True)
 class WorkloadConfig:
     name: str
     iterations: int
     output_interval: int
     allreduce_values: int
     placement: str
+    #: Absent means the job occupies every GPU -- exactly the historical
+    #: behaviour, preserved bit-for-bit.
+    allocation: AllocationConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -354,6 +386,8 @@ def load_config(config_dir: Path | str | None = None) -> ConfigBundle:
         output_interval=wl["output_interval"],
         allreduce_values=wl["allreduce_values"],
         placement=wl["placement"],
+        allocation=(AllocationConfig.from_dict(wl["allocation"])
+                    if wl.get("allocation") else None),
     )
 
     sc_doc = _read_yaml(d / "scenarios.yaml")

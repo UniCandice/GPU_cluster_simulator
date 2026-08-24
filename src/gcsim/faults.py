@@ -115,7 +115,12 @@ def _plan_episodes(ctx: InjectionContext) -> list[dict[str, Any]]:
     n = max(1, int(p["episodes"]))
     d_min, d_max = (int(v) for v in p["duration_iterations"])
     f_min, f_max = (float(v) for v in p["factor"])
-    gpu_ids = [g.gpu_id for g in ctx.cluster.gpu_list]
+    #  Victims come from the GPUs the job occupies. On a subset allocation an
+    #  episode landing on an idle GPU would derate a device nothing runs on --
+    #  a fault injected into vacuum. Empty means the whole cluster, which is
+    #  also byte-for-byte the historical draw order (global index order).
+    gpu_ids = (list(ctx.workload.allocated_gpu_ids)
+               or [g.gpu_id for g in ctx.cluster.gpu_list])
 
     #  Drawn before the episode loop so the cohort is a property of the seed
     #  alone, not of how many episodes were requested.

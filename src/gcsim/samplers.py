@@ -79,7 +79,10 @@ class SamplerSet:
         self.scenario = scenario
         self.seed = seed
         self.rank_to_gpu = rank_to_gpu
-        self.gpu_to_rank = np.empty_like(rank_to_gpu)
+        #  Sized by the cluster with -1 for idle GPUs: a subset job leaves
+        #  most GPUs unallocated, and sizing this by n_ranks scatter-indexed
+        #  by GPU index corrupts it the moment the two differ.
+        self.gpu_to_rank = np.full(cluster.n_gpus, -1, dtype=np.int64)
         self.gpu_to_rank[rank_to_gpu] = np.arange(rank_to_gpu.size)
         self.memory_per_rank_gb = memory_per_rank_gb
 
@@ -127,6 +130,18 @@ class SamplerSet:
         gspec = self.cfg.gpu
         occ_active = power_model.occupancy_active(compute_fraction, occupancy, gspec)
         utilisation = power_model.reported_utilisation(compute_fraction, gspec)
+
+        #  Idle GPUs are idle, not spinning at a barrier. The spin floor in
+        #  both models is the signature of a rank parked in a collective, and
+        #  an unallocated GPU has no rank to park -- it must read ~0, not ~99%.
+        #  Masked HERE rather than at compute_fraction == 0 inside the power
+        #  model, because allocated ranks also hit zero compute in a window
+        #  (the mesh load), and those genuinely are resident-and-spinning.
+        #  The guard keeps the full-allocation path untouched to the bit.
+        idle = self.gpu_to_rank < 0
+        if idle.any():
+            occ_active[idle] = 0.0
+            utilisation[idle] = 0.0
 
         # --- rack inlet temperature, from cooling health and rack load ----
         rack_power_kw = self._rack_power_kw()

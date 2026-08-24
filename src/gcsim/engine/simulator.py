@@ -56,10 +56,16 @@ class Simulator:
 
         self.cluster = build_cluster(cc)
         self.router = Router(self.cluster)
-        self.decomposition = partition(cfg.mesh, self.cluster.n_gpus,
+        #  The job may occupy a slice of the fixed cluster. The mesh is
+        #  partitioned over however many ranks the allocation grants; the
+        #  cluster itself never changes shape.
+        allocation = cfg.workload.allocation
+        job_ranks = allocation.n_ranks if allocation else self.cluster.n_gpus
+        self.decomposition = partition(cfg.mesh, job_ranks,
                                        preferred_first_extent=cc.gpus_per_node)
         self.placement = place(self.cluster, self.decomposition, self.router,
-                               strategy=cfg.workload.placement)
+                               strategy=cfg.workload.placement,
+                               allocation=allocation)
         self.fabric = Fabric(self.cluster, self.router)
         self.halo_flows = build_halo_flows(self.fabric, self.decomposition, self.placement)
 
@@ -72,6 +78,7 @@ class Simulator:
             output_bytes_per_cell=cfg.mesh.output_bytes_per_cell,
             dataload_bytes_per_cell=cfg.mesh.dataload_bytes_per_cell,
             allreduce_values=cfg.workload.allreduce_values,
+            allocated_gpu_ids=self.placement.allocated_gpu_ids,
         )
         self.injector = FaultInjector(cluster=self.cluster, workload=self.workload,
                                       scenario=cfg.scenario, seed=cfg.seed,
@@ -82,6 +89,16 @@ class Simulator:
         self.governor = DeviceGovernor(cc, self.cluster.n_gpus, self._leakage)
 
         self.memory_per_rank_gb = (self.decomposition.cells * cfg.mesh.bytes_per_cell) / 1e9
+        #  A rank must fit its device. Full-cluster runs always did, so this
+        #  never fired; a subset job concentrates the same mesh onto fewer
+        #  ranks, and 4 ranks of the medium mesh would otherwise sail through
+        #  reporting 108 GB in use on an 80 GB device.
+        worst_gb = float(self.memory_per_rank_gb.max())
+        if worst_gb > cc.gpu.memory_gb:
+            raise ValueError(
+                f"mesh {cfg.mesh.name!r} over {self.n_ranks} ranks puts "
+                f"{worst_gb:.1f} GB on one rank, but a {cc.gpu.model} holds "
+                f"{cc.gpu.memory_gb:.0f} GB; use more ranks or a coarser mesh")
         self.samplers = SamplerSet(
             cluster=self.cluster, governor=self.governor, scenario=cfg.scenario.name,
             seed=cfg.seed, rank_to_gpu=self.placement.rank_to_gpu,
@@ -436,6 +453,8 @@ class Simulator:
             "seed": cfg.seed,
             "iterations": self.iterations,
             "n_ranks": self.n_ranks,
+            "allocated_gpus": int(self.placement.rank_to_gpu.size),
+            "placement": self.placement.strategy,
             "runtime_s": float(self.t),
             "mean_iteration_time_s": mean_iter,
             "median_iteration_time_s": float(job["iteration_time_s"].median()),

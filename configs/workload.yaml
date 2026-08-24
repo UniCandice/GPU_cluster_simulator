@@ -38,3 +38,17 @@ allreduce_values: 8
 # racks -- which is why a rack-level fabric fault hits exactly the +/-z traffic
 # and leaves intra-node exchanges untouched.
 placement: packed
+
+# Optional: run the job on a slice of the cluster instead of all 128 GPUs.
+# The cluster itself never changes shape -- unallocated GPUs sit idle at
+# idle power and near-inlet temperature, and still appear in telemetry.
+# `racks` and `nodes` are mutually exclusive pool restrictions; with
+# neither, the pool is the whole cluster. `placement` above chooses how the
+# ranks spread over the pool (packed = prefix, scatter = round-robin over
+# the pool's racks). Absent, the job occupies every GPU -- the historical
+# behaviour, bit for bit.
+#
+# allocation:
+#   n_ranks: 32
+#   racks: [0, 1]
+#   # nodes: ["r0n0", "r0n1"]

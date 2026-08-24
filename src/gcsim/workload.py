@@ -41,6 +41,13 @@ class WorkloadState:
     #: checkpoint writes conserved state; a visualisation dump writes far more.
     output_bytes_scale: float = 1.0
 
+    #: GPU ids the job actually occupies, in global index order; empty means
+    #: the whole cluster. Filled by the Simulator from the placement. This is
+    #: how the allocated set reaches faults.py, which may import workload but
+    #: has no path to the placement -- an injection drawing victims must draw
+    #: from GPUs that are running something, or it silently does nothing.
+    allocated_gpu_ids: tuple[str, ...] = ()
+
     def is_output_iteration(self, iteration: int) -> bool:
         #  Iterations are 1-based for this test so that timestep `output_interval`
         #  is the first one that writes, rather than timestep 0.
