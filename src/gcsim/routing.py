@@ -119,7 +119,7 @@ class Router:
             latency_us=2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us,
         )
 
-    # -- helpers used by tests and by placement ----------------------------
+    # -- helpers used by tests, placement and the collective model ---------
 
     def kind(self, src_index: int, dst_index: int) -> str:
         return self.route(src_index, dst_index).kind
@@ -128,13 +128,13 @@ class Router:
         """Worst pairwise latency across a set of ranks.
 
         A ring or tree spanning racks is paced by its longest hop, so this is
-        the right pessimistic bound for a collective over `indices`. Not on the
-        collective path today: `allreduce_time_s` inlines the cross-rack
-        expression directly, and the two agree whenever the job spans more than
-        one rack -- which the shipped 128-rank config always does. Kept because
-        this is the general form (correct for a subset of ranks confined to one
-        node or rack, where the inline expression is not); a test pins the
-        agreement so the two cannot drift apart silently.
+        the right pessimistic bound for a collective over `indices`. This is
+        what `Fabric.allreduce_time_s` prices its tree steps with (memoised
+        there, since placement is static for a run): a job confined to one node
+        pays intranode latency, one rack pays the NIC pair, anything wider pays
+        the spine crossing. For the shipped 128-rank job the answer is the
+        cross-rack bound, which is why adopting this over the old inlined
+        worst-case expression changed no shipped scenario output.
         """
         cl = self.cluster
         racks = {cl.gpu(i).rack_id for i in indices}

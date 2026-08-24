@@ -270,7 +270,8 @@ class Simulator:
         busy = halo_s + compute_s
         arrival = busy.max()
         allreduce_s = self.fabric.allreduce_time_s(
-            self.n_ranks, self.workload.allreduce_bytes(), solution)
+            self.n_ranks, self.workload.allreduce_bytes(), solution,
+            gpu_indices=self.placement.rank_to_gpu)
         wait_s = arrival - busy
 
         is_output = self.workload.is_output_iteration(iteration)

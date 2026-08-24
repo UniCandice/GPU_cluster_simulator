@@ -154,22 +154,58 @@ def test_port_queue_state_is_instantaneous_not_a_high_water_mark(
     assert max(p.queue_depth for p in uplinks) == pytest.approx(up_steady)
 
 
-def test_collective_latency_inline_expression_matches_the_general_form(cluster, router):
-    """The collective inlines its worst-case latency; this pins the shortcut.
+def test_collective_step_latency_has_three_tiers(cluster, router):
+    """worst_latency_us prices a collective by the widest span its ranks cover.
 
-    `allreduce_time_s` hardcodes `2*nic + 2*leaf_uplink` per tree step instead
-    of calling `Router.worst_latency_us`, on the grounds that the job always
-    spans racks. That is an equivalence claim between two pieces of code that
-    share nothing, so it gets asserted: if either the router's latency model or
-    the collective's shortcut changes, this fails and the README paragraph
-    documenting the shortcut stops being quietly wrong.
+    With gpus_per_node=8 and 4 nodes per rack: one node is NVLink only, one
+    rack crosses two NICs, and anything wider crosses the spine. Asserted
+    against the config expressions rather than literal microseconds, so the
+    test follows the config if the link speeds are ever retuned.
     """
     ic = cluster.cfg.interconnect
-    inline_us = 2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us
-    all_ranks = list(range(cluster.n_gpus))
-    assert router.worst_latency_us(all_ranks) == pytest.approx(inline_us)
+    per_node = cluster.cfg.gpus_per_node
+    per_rack = cluster.cfg.gpus_per_rack
 
-    #  ...and the general form is genuinely more general: confined subsets are
-    #  cheaper, which is exactly what the inline expression cannot express.
-    one_node = list(range(cluster.cfg.gpus_per_node))
-    assert router.worst_latency_us(one_node) < inline_us
+    same_node = router.worst_latency_us(list(range(per_node)))
+    same_rack = router.worst_latency_us([0, per_node])
+    cross_rack = router.worst_latency_us([0, per_rack])
+
+    assert same_node == pytest.approx(ic.intranode.latency_us)
+    assert same_rack == pytest.approx(2.0 * ic.nic.latency_us)
+    assert cross_rack == pytest.approx(2.0 * ic.nic.latency_us
+                                       + 2.0 * ic.leaf_uplink.latency_us)
+    assert same_node < same_rack < cross_rack
+
+
+def test_allreduce_cost_tracks_where_the_ranks_actually_are(cluster, router):
+    """The collective is priced by placement, not by a config constant.
+
+    The previous implementation hardcoded the cross-rack worst case, so a job
+    confined to one node was charged 34 us per tree step for 2 us hops -- and
+    this test fails on that code, which is the point of it. Identical rank
+    count, identical bytes; only where the GPUs sit differs.
+    """
+    import numpy as np
+    from gcsim.models.network import Fabric
+
+    fabric = Fabric(cluster, router)
+    per_node = cluster.cfg.gpus_per_node
+    per_rack = cluster.cfg.gpus_per_rack
+
+    one_node = np.arange(per_node)
+    four_racks = np.arange(per_node) * per_rack // 2   # spread over racks
+
+    cheap = fabric.allreduce_time_s(per_node, 64.0, None, gpu_indices=one_node)
+    dear = fabric.allreduce_time_s(per_node, 64.0, None, gpu_indices=four_racks)
+    assert cheap < dear
+
+    #  ...and the full job still lands exactly on the cross-rack bound the old
+    #  code hardcoded, which is why every shipped scenario is byte-identical.
+    ic = cluster.cfg.interconnect
+    all_gpus = np.arange(cluster.n_gpus)
+    import math
+    steps = 2.0 * math.ceil(math.log2(cluster.n_gpus))
+    expected_latency = (2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us) * 1e-6
+    got = fabric.allreduce_time_s(cluster.n_gpus, 64.0, None, gpu_indices=all_gpus)
+    bandwidth = 2.0 * (cluster.n_gpus - 1) / cluster.n_gpus * 64.0         / (ic.leaf_uplink.total_bandwidth_gbps * 1e9 / 8.0)
+    assert got == pytest.approx(steps * expected_latency + bandwidth)

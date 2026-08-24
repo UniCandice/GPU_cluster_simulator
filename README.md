@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 102 tests, ~50 s
+python -m pytest -q               # 103 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -291,7 +291,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              102 tests
+tests/              103 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
@@ -473,10 +473,11 @@ exactly one term below — never the decomposition, placement, or router. It ret
 scalar:
 
 - `steps = 2·⌈log₂P⌉` (double-binary tree), a function of rank count only.
-- Per-step latency is hardcoded to the cross-rack worst case (`2·nic + 2·leaf_uplink`), not
-  derived from actual rank placement. (`Router.worst_latency_us` computes the general per-subset
-  bound but is not on this path — the expression is inlined, and the two agree for the shipped
-  128-GPU / 4-rack config.)
+- Per-step latency is the worst pairwise latency among the GPUs the ranks actually occupy
+  (`Router.worst_latency_us`), so a job confined to one node or rack is priced at 2 µs or 10 µs
+  per step rather than the 34 µs spine crossing. The shipped 128-GPU job always spans racks, so
+  for every scenario in this repository the value is the cross-rack bound. It is still a single
+  worst-case figure per step — tree levels are not tiered by distance.
 - The ring bandwidth term uses the **nominal** uplink bundle capacity from config, not the live
   degraded capacity, so downing uplinks does not shrink it.
 

@@ -127,6 +127,8 @@ class Fabric:
             [cluster.channels[c].nominal_gbps for c in self.cd_channel], dtype=np.float64)
 
         self._cache: dict[tuple, FabricSolution] = {}
+        #  Collective step latency per GPU-index set; see _collective_step_latency_s.
+        self._collective_latency_s: dict[bytes, float] = {}
 
     # -- compiling flows ---------------------------------------------------
 
@@ -356,18 +358,24 @@ class Fabric:
     # -- collectives -------------------------------------------------------
 
     def allreduce_time_s(self, n_ranks: int, message_bytes: float,
-                         sol: FabricSolution | None = None) -> float:
+                         sol: FabricSolution | None = None,
+                         gpu_indices: np.ndarray | None = None) -> float:
         """Cost of the job-wide reduction that closes each timestep.
 
         Small payloads, so this is latency-dominated and modelled as a
         double-binary tree: ``2 * ceil(log2 P)`` sequential hops at the worst
-        pairwise latency in the job, plus a ring-style bandwidth term that is
-        negligible at these sizes. Queueing delay on the congested uplinks is
-        added, which is why a fabric fault lengthens the collective as well as
-        the halo exchange.
+        pairwise latency among the GPUs the job's ranks actually occupy
+        (`Router.worst_latency_us` over `gpu_indices`), plus a ring-style
+        bandwidth term that is negligible at these sizes. A job confined to one
+        node therefore pays intranode latency per step, not the cross-rack
+        worst case. Queueing delay on the congested uplinks is added, which is
+        why a fabric fault lengthens the collective as well as the halo
+        exchange.
+
+        Without `gpu_indices` the per-step latency falls back to the cross-rack
+        bound -- correct for any job spanning racks, pessimistic otherwise.
         """
-        ic = self.cluster.cfg.interconnect
-        base_latency_s = (2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us) * 1e-6
+        base_latency_s = self._collective_step_latency_s(gpu_indices)
 
         queue_s = 0.0
         if sol is not None:
@@ -375,10 +383,34 @@ class Fabric:
             if uplinks:
                 queue_s = float(sol.cd_queue_delay_s[uplinks].max())
 
+        ic = self.cluster.cfg.interconnect
         steps = 2.0 * float(np.ceil(np.log2(max(n_ranks, 2))))
         cap_bps = ic.leaf_uplink.total_bandwidth_gbps * _GBPS_TO_BPS
         bandwidth_term = 2.0 * (n_ranks - 1) / n_ranks * message_bytes / cap_bps
         return steps * (base_latency_s + queue_s) + bandwidth_term
+
+    def _collective_step_latency_s(self, gpu_indices: np.ndarray | None) -> float:
+        """Per-step latency for a collective over these GPUs, memoised.
+
+        `Router.worst_latency_us` walks every index to build rack and node
+        sets, and the collective runs once per timestep over the same static
+        placement -- a thousand identical walks per run. Memoised here, keyed
+        on the index set's bytes, rather than precomputed by the Simulator:
+        the fabric stays the one place that knows how a collective is priced,
+        callers stay ignorant of the caching, and a second caller with a
+        different subset of GPUs gets its own entry instead of a wrong shared
+        one.
+        """
+        ic = self.cluster.cfg.interconnect
+        if gpu_indices is None:
+            return (2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us) * 1e-6
+        key = np.asarray(gpu_indices, dtype=np.int64).tobytes()
+        cached = self._collective_latency_s.get(key)
+        if cached is None:
+            indices = [int(i) for i in np.asarray(gpu_indices).ravel()]
+            cached = self.router.worst_latency_us(indices) * 1e-6
+            self._collective_latency_s[key] = cached
+        return cached
 
 
 def build_halo_flows(fabric: Fabric, decomposition, placement) -> FlowSet:
