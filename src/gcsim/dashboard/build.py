@@ -361,16 +361,28 @@ def _signature_row(frames: dict[str, pd.DataFrame], job: pd.DataFrame) -> dict[s
 # payload
 # ---------------------------------------------------------------------------
 
-def seeds_under(runs_dir: Path | str) -> list[int]:
-    """Every seed with runs on disk, ascending."""
+def seed_run_counts(runs_dir: Path | str) -> dict[int, int]:
+    """How many run directories each seed has on disk, keyed by seed.
+
+    The count matters because seeds are no longer guaranteed to be full sweeps:
+    a quick `--scenarios straggler --meshes coarse` run leaves a seed with one
+    directory, and the pages need to say so rather than looking identical to an
+    eighteen-run sweep.
+    """
     runs_dir = Path(runs_dir)
-    found = set()
+    counts: dict[int, int] = {}
     for d in sorted(runs_dir.iterdir()):
         summary = d / "summary.json"
         if d.is_dir() and summary.exists():
             with summary.open("r", encoding="utf-8") as fh:
-                found.add(int(json.load(fh)["seed"]))
-    return sorted(found)
+                s = int(json.load(fh)["seed"])
+            counts[s] = counts.get(s, 0) + 1
+    return counts
+
+
+def seeds_under(runs_dir: Path | str) -> list[int]:
+    """Every seed with runs on disk, ascending."""
+    return sorted(seed_run_counts(runs_dir))
 
 
 def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, Any]:
@@ -572,7 +584,8 @@ def build_dashboard(runs_dir: Path | str,
     you at a glance whether the page you are looking at is this build.
     """
     runs_dir = Path(runs_dir)
-    seeds = seeds_under(runs_dir)
+    counts = seed_run_counts(runs_dir)
+    seeds = sorted(counts)
     if not seeds:
         raise FileNotFoundError(
             f"no runs found under {runs_dir}; run scripts/run_all.py first")
@@ -589,8 +602,10 @@ def build_dashboard(runs_dir: Path | str,
         return out if len(seeds) == 1 else out.with_name(f"{out.stem}_seed{seed}{out.suffix}")
 
     #  Every page lists every seed, so the header can offer one-click switching
-    #  without the reader having to guess a filename.
-    others = [{"seed": s, "href": path_for(s).name} for s in seeds]
+    #  without the reader having to guess a filename. The run count rides along
+    #  because seeds are not all alike any more: "view 8 (1)" tells the reader
+    #  that page holds a single run before they click through to it.
+    others = [{"seed": s, "href": path_for(s).name, "n_runs": counts[s]} for s in seeds]
 
     written: list[Path] = []
     stamp = ""

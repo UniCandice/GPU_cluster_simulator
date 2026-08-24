@@ -101,6 +101,12 @@ header { border-bottom:1px solid var(--border); padding-bottom:16px; margin-bott
 .pill:hover { background:var(--surface-2); }
 .pill[aria-pressed="true"] { background:var(--ink); color:var(--page);
                              border-color:var(--ink); font-weight:560; }
+/*  A combination with no run on disk. Kept visible so the chrome holds its
+    shape whatever subset was simulated; greyed so it reads as "not simulated",
+    not as a button that is broken.  */
+.pill[aria-disabled="true"] { opacity:.4; cursor:not-allowed; }
+.pill[aria-disabled="true"]:hover { background:var(--surface); }
+.coverage { flex:1 0 100%; margin-top:4px; font-size:12px; color:var(--muted); }
 .tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:1px solid var(--border);
         margin-bottom:22px; }
 .tab { border:0; background:none; color:var(--muted); font:inherit; font-size:13.5px;
@@ -549,6 +555,29 @@ const TABS = ["Overview", "Timeline", "Ranks", "Mesh & partitioning",
 
 const state = {mesh: DATA.default_mesh, scenario: "straggler", tab: 0, rankMetric: "wait"};
 
+/*  Which scenario x mesh combinations exist for this seed. Derived from the
+    payload's own run keys rather than shipped beside them, so it cannot
+    disagree with the data. Seeds are not guaranteed to be full sweeps -- a
+    quick `--scenarios straggler --meshes coarse` run leaves one combination on
+    disk -- and a page must land on what exists and grey out what does not,
+    rather than initialising onto a run that is not there and rendering
+    nothing. */
+const HAVE = new Set(Object.keys(DATA.runs));
+const hasRun = (s, m) => HAVE.has(`${s}__${m}`);
+const meshHasRuns = m => DATA.scenarios.some(s => hasRun(s.name, m));
+
+/*  Snap the selection to a combination that exists. Runs before every render,
+    so neither the built-in defaults nor a deep link to a missing combination
+    can leave the page blank -- both fall through to the nearest real run and
+    writeHash() then records where they landed. */
+function resolveState() {
+  if (!meshHasRuns(state.mesh))
+    state.mesh = meshHasRuns(DATA.default_mesh) ? DATA.default_mesh
+                                                : DATA.meshes.find(meshHasRuns);
+  if (!hasRun(state.scenario, state.mesh))
+    state.scenario = DATA.scenarios.find(s => hasRun(s.name, state.mesh)).name;
+}
+
 /* The whole view is addressable: #tab=2&scenario=thermal&mesh=fine&metric=temperature.
    Deep links make a specific finding shareable, and let the build be screenshotted
    view by view. */
@@ -598,19 +627,29 @@ function renderChrome() {
     ["Telemetry", m.sample_interval_s + " s sample interval"],
     //  One seed per page. A page carrying two would be showing whichever run
     //  loaded last, since runs are keyed by scenario and mesh with no seed in
-    //  the key. The other seeds are offered as links instead of merged in.
+    //  the key. The other seeds are offered as links instead of merged in --
+    //  with their run counts, because seeds are not all alike: "view 8 (1)"
+    //  says that page holds a single run before the reader clicks through.
     ["Seed", m.seed + (m.seed_links && m.seed_links.length > 1
       ? " " + m.seed_links.filter(l => l.seed !== m.seed)
-          .map(l => `<a href="${l.href}">view ${l.seed}</a>`).join(" ")
+          .map(l => `<a href="${l.href}">view ${l.seed}${
+            l.n_runs != null ? ` (${l.n_runs})` : ""}</a>`).join(" ")
       : "")],
     ["Generated", m.generated],
   ].map(([k, v]) => `<span><b>${k}:</b> ${v}</span>`).join("");
 
+  //  Pills for combinations with no run on disk stay visible but disabled --
+  //  the chrome keeps its shape whatever subset was simulated, and a greyed
+  //  option says "not simulated at this seed" where a missing one would just
+  //  look broken. Availability is per-combination, so a scenario can be live
+  //  at one mesh and greyed at another.
   const mesh = document.getElementById("meshsel");
   mesh.innerHTML = DATA.meshes.map(n =>
-    `<button class="pill" data-mesh="${n}" aria-pressed="${n === state.mesh}">` +
-    `${DATA.partitions[n].label}</button>`).join("");
-  mesh.onclick = e => { const b = e.target.closest("[data-mesh]"); if (!b) return;
+    `<button class="pill" data-mesh="${n}" aria-pressed="${n === state.mesh}"` +
+    (meshHasRuns(n) ? "" : ' aria-disabled="true" title="no runs at this seed"') +
+    `>${DATA.partitions[n].label}</button>`).join("");
+  mesh.onclick = e => { const b = e.target.closest("[data-mesh]");
+                        if (!b || b.getAttribute("aria-disabled")) return;
                         state.mesh = b.dataset.mesh; render(); };
 
   //  Every tab gets the full control, always. Overview shows all six scenarios
@@ -621,10 +660,20 @@ function renderChrome() {
   //  property of the tab. The selection is not wasted either: it carries over,
   //  so picking a scenario here means it is already chosen on Timeline or Ranks.
   const sc = document.getElementById("scensel");
+  const total = DATA.scenarios.length * DATA.meshes.length;
   sc.innerHTML = DATA.scenarios.map(s =>
-    `<button class="pill" data-scen="${s.name}" aria-pressed="${s.name === state.scenario}">` +
-    `${s.label}</button>`).join("");
-  sc.onclick = e => { const b = e.target.closest("[data-scen]"); if (!b) return;
+    `<button class="pill" data-scen="${s.name}" aria-pressed="${s.name === state.scenario}"` +
+    (hasRun(s.name, state.mesh) ? ""
+      : ' aria-disabled="true" title="no run for this scenario at the selected mesh"') +
+    `>${s.label}</button>`).join("") +
+    //  A partial sweep says so in the controls, where the greyed pills are.
+    //  A full one adds nothing, so the ordinary 18-run page is unchanged.
+    (HAVE.size < total
+      ? `<span class="coverage">${HAVE.size} of ${total} scenario &times; mesh combinations ` +
+        `on disk for seed ${DATA.meta.seed} &mdash; greyed options have no run.</span>`
+      : "");
+  sc.onclick = e => { const b = e.target.closest("[data-scen]");
+                      if (!b || b.getAttribute("aria-disabled")) return;
                       state.scenario = b.dataset.scen; render(); };
 
   const tabs = document.getElementById("tabs");
@@ -639,15 +688,22 @@ function tabOverview() {
   const v = document.getElementById("view");
   const rows = DATA.scenarios.map(s => ({s, r: DATA.runs[`${s.name}__${state.mesh}`]}))
                              .filter(x => x.r);
-  const base = DATA.runs[`healthy__${state.mesh}`].summary;
+  const absent = DATA.scenarios.filter(s => !hasRun(s.name, state.mesh));
+  //  Everything here that compares against healthy needs the healthy run to
+  //  exist AT THIS MESH, and a partial sweep may not have it. The tab then
+  //  shows what is on disk and says plainly what it cannot compute, instead of
+  //  throwing on the first dereference and rendering nothing at all.
+  const healthy = DATA.runs[`healthy__${state.mesh}`];
+  const base = healthy ? healthy.summary : null;
 
   v.innerHTML = `
     <div class="card">
       <h2>Every scenario on the ${state.mesh} mesh</h2>
-      <p class="sub">Six runs of the same job on the same cluster. The verdict comes from a
-        rule-based classifier that reads telemetry only &mdash; it never sees which scenario
-        it is looking at. Ground truth is shown beside it.</p>
-      ${tiles([
+      <p class="sub">${rows.length} run${rows.length === 1 ? "" : "s"} of the same job on the
+        same cluster. The verdict comes from a rule-based classifier that reads telemetry only
+        &mdash; it never sees which scenario it is looking at. Ground truth is shown beside
+        it.</p>
+      ${base ? tiles([
         {k: "Baseline timestep", v: fmt(base.mean_iteration_time_s * 1e3, 1), u: "ms",
          d: "healthy reference"},
         {k: "Parallel efficiency", v: fmt(base.parallel_efficiency * 100, 1), u: "%",
@@ -658,10 +714,14 @@ function tabOverview() {
          d: DATA.partitions[state.mesh].imbalance > 1.001 ? "ragged &mdash; no fault present" : "exact"},
         {k: "Classifier", v: rows.filter(x => x.s.fault === (x.r.summary.diagnosis.verdict === "HARDWARE_FAULT")).length +
              "/" + rows.length, u: "", d: "agreed with ground truth"},
-      ])}
+      ]) : `<p class="note"><b>No healthy run at this mesh for this seed</b>, so the baseline
+        tiles and every &ldquo;vs healthy&rdquo; comparison are unavailable. Run the healthy
+        scenario at this mesh to enable them.</p>`}
+      ${absent.length ? `<p class="note">Not on disk at this mesh:
+        ${absent.map(s => `<code>${s.name}</code>`).join(", ")}.</p>` : ""}
     </div>
 
-    <div class="card">
+    ${base ? `<div class="card">
       <h2>Throughput cost by scenario</h2>
       <p class="sub">Colour is the classifier's verdict, not the series identity &mdash; every bar
          is labelled, so the status colour never carries meaning on its own.</p>
@@ -675,7 +735,7 @@ function tabOverview() {
          <code>straggler</code> and <code>gpu_degradation</code> cost the job almost exactly the
          same time and widen the rank spread by almost exactly the same amount. Nothing in this
          chart separates them &mdash; see the Diagnosis tab for what does.</p>
-    </div>
+    </div>` : ""}
 
     <div class="card"><h2>Scenario detail</h2><div class="scroll"><table>
       <thead><tr><th>Scenario</th><th>Ground truth</th><th>Verdict</th><th>Tier</th>
@@ -683,19 +743,19 @@ function tabOverview() {
         <th>Throttled</th></tr></thead><tbody>
       ${rows.map(({s, r}) => {
         const d = r.summary.diagnosis, su = r.summary;
-        const dv = (su.mean_iteration_time_s / base.mean_iteration_time_s - 1) * 100;
+        const dv = base ? (su.mean_iteration_time_s / base.mean_iteration_time_s - 1) * 100 : null;
         return `<tr><td class="hl">${s.label}</td>
           <td>${s.fault ? "fault" : "not a fault"}</td>
           <td>${verdictBadge(d.verdict)}</td><td>${d.tier}</td>
           <td>${fmt(su.mean_iteration_time_s * 1e3, 1)} ms</td>
-          <td>${dv > 0.5 ? "+" : ""}${fmt(dv, 1)}%</td>
+          <td>${dv == null ? "&mdash;" : (dv > 0.5 ? "+" : "") + fmt(dv, 1) + "%"}</td>
           <td>${fmt(su.mean_rank_spread_s * 1e3, 1)} ms</td>
           <td>${fmt(su.max_temperature_c, 1)} &deg;C</td>
           <td>${su.throttle_reasons.length ? su.throttle_reasons.join(", ") : "&mdash;"}</td></tr>`;
       }).join("")}
     </tbody></table></div></div>`;
 
-  redraws = [() => {
+  redraws = !base ? [] : [() => {
     const bars = rows.map(({s, r}) => ({
       label: s.name,
       v: (r.summary.mean_iteration_time_s / base.mean_iteration_time_s - 1) * 100,
@@ -1007,14 +1067,18 @@ function tabMesh() {
       <p class="sub">Same cluster, same code, no fault anywhere. Compute scales with subdomain
         <b>volume</b>; halo traffic scales with subdomain <b>surface area</b>. Resolution alone
         therefore sets how much of each timestep is useful work.</p>
-      <div class="grid g3" style="margin-top:14px">
+      ${study.length ? `<div class="grid g3" style="margin-top:14px">
         <div><h3>SM occupancy</h3><div class="chart" id="c-occ"></div></div>
         <div><h3>Parallel efficiency</h3><div class="chart" id="c-eff"></div></div>
         <div><h3>Halo cost per unit of ideal compute</h3><div class="chart" id="c-halo"></div></div>
       </div>
       <p class="note">Three separate charts, never one with two y-axes. The third measures halo
         cost against <b>ideal</b> compute rather than achieved: a coarse mesh inflates its own
-        denominator through the occupancy penalty, which would mask the effect being measured.</p>
+        denominator through the occupancy penalty, which would mask the effect being measured.</p>`
+      : `<p class="note"><b>The mesh study compares healthy runs across the three meshes</b>, and
+        this seed has none on disk, so its charts are unavailable here. The cards below are
+        geometry &mdash; derived from configuration, the same in every run &mdash; and do not
+        need one.</p>`}
     </div>
 
     <div class="card">
@@ -1077,7 +1141,8 @@ function tabMesh() {
         not reach <code>r0</code> at all. The shape of this diagram is the boundary condition.</p>
     </div>
 
-    <div class="card"><h2>The three meshes</h2><div class="scroll"><table>
+    ${study.length ? `<div class="card"><h2>${study.length === DATA.meshes.length
+        ? "The three meshes" : "Meshes with healthy runs"}</h2><div class="scroll"><table>
       <thead><tr><th>Mesh</th><th>Dims</th><th>Cells/rank</th><th>Imbalance</th>
         <th>Surface:volume</th><th>Halo/step</th><th>Memory/rank</th><th>Occupancy</th>
         <th>Utilisation</th><th>Halo/ideal</th><th>Timestep</th><th>Efficiency</th></tr></thead>
@@ -1091,23 +1156,25 @@ function tabMesh() {
         <td>${fmt(m.iteration_time_s * 1e3, 1)} ms</td>
         <td>${fmt(m.parallel_efficiency * 100, 1)}%</td></tr>`).join("")}</tbody>
     </table></div>
-      <p class="note"><b>Utilisation is flat at ~99.9% across all three</b> while occupancy runs
+      <p class="note"><b>Utilisation is flat at ~99.9%</b> while occupancy runs
         from ${fmt(study[0].sm_occupancy_pct, 0)}% to ${fmt(study[study.length - 1].sm_occupancy_pct, 0)}%.
         A fleet dashboard showing only utilisation would report the coarse mesh as fully busy
         while it wasted two-thirds of the hardware.</p>
-    </div>`;
+    </div>` : ""}`;
 
   redraws = [() => {
-    const one = SERIES()[0], labels = study.map(m => m.mesh);
-    drawBars(document.getElementById("c-occ"), {values: study.map(m => m.sm_occupancy_pct),
-      labels, yLabel: "%", height: 165, vFmt: x => fmt(x, 1) + "%",
-      colors: study.map(() => one)});
-    drawBars(document.getElementById("c-eff"), {values: study.map(m => m.parallel_efficiency * 100),
-      labels, yLabel: "%", height: 165, vFmt: x => fmt(x, 1) + "%",
-      colors: study.map(() => one)});
-    drawBars(document.getElementById("c-halo"), {values: study.map(m => m.halo_per_ideal_compute),
-      labels, yLabel: "ratio", height: 165, vFmt: x => fmt(x, 3),
-      colors: study.map(() => one)});
+    if (study.length) {
+      const one = SERIES()[0], labels = study.map(m => m.mesh);
+      drawBars(document.getElementById("c-occ"), {values: study.map(m => m.sm_occupancy_pct),
+        labels, yLabel: "%", height: 165, vFmt: x => fmt(x, 1) + "%",
+        colors: study.map(() => one)});
+      drawBars(document.getElementById("c-eff"), {values: study.map(m => m.parallel_efficiency * 100),
+        labels, yLabel: "%", height: 165, vFmt: x => fmt(x, 1) + "%",
+        colors: study.map(() => one)});
+      drawBars(document.getElementById("c-halo"), {values: study.map(m => m.halo_per_ideal_compute),
+        labels, yLabel: "ratio", height: 165, vFmt: x => fmt(x, 3),
+        colors: study.map(() => one)});
+    }
     drawHeatmap(document.getElementById("c-grid"), {
       matrix: grid, fmt: v => Math.round(v).toLocaleString(), canvasHeight: 420,
       domain: {mode: "data"},
@@ -1365,6 +1432,7 @@ function tabDiagnosis() {
 
 /* --- driver --------------------------------------------------------------- */
 function render() {
+  resolveState();
   writeHash();
   renderChrome();
   [tabOverview, tabTimeline, tabRanks, tabMesh, tabTelemetry, tabDiagnosis][state.tab]();

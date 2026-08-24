@@ -798,3 +798,42 @@ def test_the_racks_form_one_ring_through_z(bundle, cluster):
         assert sorted(visited) == list(range(n_racks)), f"{name}: {ring} is not one cycle"
         assert visited[-1] == 0, f"{name}: ring does not close, {visited}"
         assert all(ring[k] != k for k in range(n_racks)), f"{name}: self-loop in {ring}"
+
+
+# ---------------------------------------------------------------------------
+# partial run sets
+# ---------------------------------------------------------------------------
+
+def test_sparse_run_sets_build_per_seed_pages(bundle, tmp_path):
+    """A seed holding one run must still produce a working page.
+
+    Nothing guarantees a seed is a full sweep: `--seed 8 --scenarios straggler
+    --meshes coarse` leaves exactly one directory, and that case shipped broken
+    -- the payload builder assumed healthy runs exist (mesh_study) and the page
+    assumed the default scenario x mesh combination exists. Every prior test
+    built full sweeps, so the gap was reachable from the README and covered by
+    nothing.
+    """
+    from gcsim.dashboard.build import build_dashboard, build_payload
+    from gcsim.scenarios import run_scenario
+
+    runs = tmp_path / "runs"
+    run_scenario("straggler", mesh="coarse", seed=8, bundle=bundle, out_dir=runs)
+    run_scenario("phase_change", mesh="coarse", seed=7, bundle=bundle, out_dir=runs)
+
+    payload = build_payload(runs, seed=8)
+    assert list(payload["runs"]) == ["straggler__coarse"]
+    assert payload["meta"]["seed"] == 8
+    #  No healthy runs -> no mesh study. The page must degrade, not throw.
+    assert payload["mesh_study"] == []
+    #  Geometry is config-derived, so it is complete even on a sparse seed.
+    assert sorted(payload["partitions"]) == sorted(bundle.meshes)
+
+    paths, _ = build_dashboard(runs, out_path=tmp_path / "dash" / "index.html")
+    assert [q.name for q in paths] == ["index_seed7.html", "index_seed8.html", "index.html"]
+
+    #  Every page carries every seed's link WITH its run count, so a reader can
+    #  tell a one-run seed from a full sweep before clicking through.
+    page = paths[1].read_text(encoding="utf-8")
+    assert '"seed_links":[{"seed":7,"href":"index_seed7.html","n_runs":1},' \
+           '{"seed":8,"href":"index_seed8.html","n_runs":1}]' in page
