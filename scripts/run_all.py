@@ -51,7 +51,13 @@ def main(argv: list[str] | None = None) -> int:
 
     bundle = load_config()
     print(f"cluster: {bundle.cluster.racks} racks x {bundle.cluster.nodes_per_rack} nodes "
-          f"x {bundle.cluster.gpus_per_node} GPUs = {bundle.cluster.n_gpus} ranks")
+          f"x {bundle.cluster.gpus_per_node} GPUs = {bundle.cluster.n_gpus} GPUs")
+    #  The job is not necessarily the cluster: with an allocation block active
+    #  the header used to end "= 128 ranks" above an 18-run sweep of 64-rank
+    #  jobs, contradicting the configuration in the first line printed.
+    if bundle.workload.allocation:
+        print(f"job: {bundle.workload.allocation.n_ranks} of "
+              f"{bundle.cluster.n_gpus} GPUs ({bundle.workload.placement})")
     print(f"workload: {bundle.workload.iterations} timesteps, "
           f"output every {bundle.workload.output_interval}\n")
 
