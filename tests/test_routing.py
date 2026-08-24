@@ -152,3 +152,24 @@ def test_port_queue_state_is_instantaneous_not_a_high_water_mark(
         port.queue_depth = up_steady + 1e6
     exchange()
     assert max(p.queue_depth for p in uplinks) == pytest.approx(up_steady)
+
+
+def test_collective_latency_inline_expression_matches_the_general_form(cluster, router):
+    """The collective inlines its worst-case latency; this pins the shortcut.
+
+    `allreduce_time_s` hardcodes `2*nic + 2*leaf_uplink` per tree step instead
+    of calling `Router.worst_latency_us`, on the grounds that the job always
+    spans racks. That is an equivalence claim between two pieces of code that
+    share nothing, so it gets asserted: if either the router's latency model or
+    the collective's shortcut changes, this fails and the README paragraph
+    documenting the shortcut stops being quietly wrong.
+    """
+    ic = cluster.cfg.interconnect
+    inline_us = 2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us
+    all_ranks = list(range(cluster.n_gpus))
+    assert router.worst_latency_us(all_ranks) == pytest.approx(inline_us)
+
+    #  ...and the general form is genuinely more general: confined subsets are
+    #  cheaper, which is exactly what the inline expression cannot express.
+    one_node = list(range(cluster.cfg.gpus_per_node))
+    assert router.worst_latency_us(one_node) < inline_us

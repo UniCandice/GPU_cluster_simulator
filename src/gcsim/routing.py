@@ -119,7 +119,7 @@ class Router:
             latency_us=2.0 * ic.nic.latency_us + 2.0 * ic.leaf_uplink.latency_us,
         )
 
-    # -- helpers used by tests and by the collective model -----------------
+    # -- helpers used by tests and by placement ----------------------------
 
     def kind(self, src_index: int, dst_index: int) -> str:
         return self.route(src_index, dst_index).kind
@@ -127,8 +127,14 @@ class Router:
     def worst_latency_us(self, indices: list[int]) -> float:
         """Worst pairwise latency across a set of ranks.
 
-        Used by the collective model: a ring or tree spanning racks is paced by
-        its longest hop, so this is the right pessimistic bound.
+        A ring or tree spanning racks is paced by its longest hop, so this is
+        the right pessimistic bound for a collective over `indices`. Not on the
+        collective path today: `allreduce_time_s` inlines the cross-rack
+        expression directly, and the two agree whenever the job spans more than
+        one rack -- which the shipped 128-rank config always does. Kept because
+        this is the general form (correct for a subset of ranks confined to one
+        node or rack, where the inline expression is not); a test pins the
+        agreement so the two cannot drift apart silently.
         """
         cl = self.cluster
         racks = {cl.gpu(i).rack_id for i in indices}

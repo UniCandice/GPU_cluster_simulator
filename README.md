@@ -17,7 +17,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 101 tests, ~50 s
+python -m pytest -q               # 102 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```
@@ -291,7 +291,7 @@ src/gcsim/
   metrics.py        attribution + the rule-based diagnosis
   dashboard/        payload builder + the self-contained HTML template
 scripts/run_all.py  the whole study, end to end
-tests/              101 tests
+tests/              102 tests
 ```
 
 `TELEMETRY.md` documents all nine streams: schema, causal origin, and what each shows per scenario.
@@ -349,11 +349,8 @@ Beyond the usual unit coverage, the tests that carry the argument:
 
 ## Known limitations
 
-- **Flow-level analytic network model**, not packet-level simulation. Contention is a two-pass
-  max-min-fair approximation rather than an exact fixed point, and the uplink bundle is aggregated
-  into one channel (per-port telemetry is recovered by spreading traffic across live members, which
-  is what ECMP does in aggregate).
-- **Collectives use a closed-form tree/ring cost**, not a real NCCL algorithm-selection tree.
+- **The network model is flow-level and the collective is closed-form** — detailed in
+  [the subsection below](#the-network-model-in-detail), because the boundary is load-bearing.
 - **Thermal model is a first-order RC per GPU** with no rack airflow recirculation and no
   hot-aisle coupling between racks.
 - **No failure/restart path.** Nothing crashes, no checkpoint is ever recovered from, and there is
@@ -395,6 +392,113 @@ Beyond the usual unit coverage, the tests that carry the argument:
 - The **diagnosis is a small rule set**, not a detector anyone should deploy. It exists to make the
   discriminating channels explicit and checkable, and it is scored against ground truth on the
   dashboard (18/18 on the current matrix).
+
+### The network model, in detail
+
+The fabric is an **analytic flow-level model**, not a packet-level simulator. The mesh
+decomposition and the halo traffic matrix are modelled faithfully; what is approximated is the
+rate math on shared links, and the collective.
+
+#### What *is* modelled per rank
+
+The halo exchange is compiled into one flow per (rank, direction) — 768 concurrent transfers for
+a 128-rank job (`build_halo_flows`). Each flow's destination comes from the periodic Cartesian
+neighbour map, its size from that rank's actual face area (`face_cells ×
+halo_bytes_per_boundary_cell × inner_iterations`), and its path from the rank→GPU placement
+through the router (intranode / intra-rack / cross-rack). Contention is computed over the flows
+that genuinely share each channel, and each rank completes when all six sends and six receives
+finish. Ragged partitions and placement strategy (`packed` vs `scatter`) therefore change the
+result for real reasons, not by assertion.
+
+#### Flow-level, not packet-level
+
+Transfers are solved as flows with a closed-form rate, never as packets:
+
+```
+share(channel)   = available_capacity / concurrent_flows
+bottleneck(flow) = min(share(h) for h in hops(flow))
+duration(flow)   = latency(path) + bytes / bottleneck(flow)
+```
+
+Queueing and loss are *derived* from utilisation (`queue = ρ²/(1−ρ)`, loss = overflow past the
+port buffer) rather than simulated. Consequences:
+
+- No packet-scale dynamics — no microbursts, incast, PFC/pause frames, or TCP/RoCE
+  congestion-control behaviour. A burst overflowing a shallow buffer at low mean utilisation
+  cannot happen here.
+- No intra-timestep ordering. All flows are treated as starting together, so axis-serialised
+  halo exchanges or compute/communication overlap are not represented.
+- The traffic matrix is static: the `FlowSet` is built once per run and is not part of the solve
+  cache key, so adaptive meshing or a time-varying communication pattern would require extending
+  that key.
+
+#### Two-pass approximation, not an exact fixed point
+
+Durations → utilisation → loss → goodput → durations is circular. The solver stops after **two
+passes** (solve clean, then re-solve at the goodput congestion left) rather than iterating to
+convergence. It is also not true max-min fairness: every flow takes `capacity / count` at each
+hop, with no progressive filling, so a flow bottlenecked elsewhere still reserves an unused
+share on its other hops. Good enough for this symmetric, repeating workload; approximate under
+strongly asymmetric traffic.
+
+#### Uplink bundles are aggregated — fault localisation is bundle-level
+
+Leaf uplink members are fused into one logical channel whose capacity is the sum of live members
+and whose error rate is their **mean** (`_capacity_and_error`). Per-port telemetry is
+reconstructed afterwards by spreading the channel's bytes, drops and errors **evenly** across
+live members (`accumulate`) — which is what ECMP does to bytes in aggregate. Therefore:
+
+- **Hard-down port** — localisable from raw `telemetry_switch_port` (`link_up = False`,
+  `capacity_gbps = 0`, counters flatline). Note that `diagnose()` reports only the affected
+  *domain* and a count of down ports; it does not name the port IDs in `localisation`.
+- **Degraded-but-up port** — *not* localisable by construction. One marginal optic among N
+  survivors produces identical counters on every live member. Real switches count errors per
+  receiving PHY, so a real fleet can single out the bad optic where this model cannot.
+
+No ECMP hash imbalance, no elephant-flow pinning, no per-member asymmetry of any kind. Routing
+is static and health-independent (mirroring ECMP over a LAG), so there is no rerouting around
+failures; `MAX_HOPS` is capped at 4.
+
+#### The intranode fabric has no internal topology
+
+`intranode:{node}` is a single flat channel with no member ports: it always runs at nominal
+rate, never errors, and cannot be degraded by any injection. There is no NVSwitch-vs-cube-mesh
+distinction and no per-link NVLink contention, so under `packed` placement the ±x exchanges are
+effectively free and fault-free.
+
+#### Collectives are a closed-form cost, not a simulated collective
+
+`allreduce_time_s` receives a rank **count** and a byte count — plus the halo solution, used for
+exactly one term below — never the decomposition, placement, or router. It returns a single
+scalar:
+
+- `steps = 2·⌈log₂P⌉` (double-binary tree), a function of rank count only.
+- Per-step latency is hardcoded to the cross-rack worst case (`2·nic + 2·leaf_uplink`), not
+  derived from actual rank placement. (`Router.worst_latency_us` computes the general per-subset
+  bound but is not on this path — the expression is inlined, and the two agree for the shipped
+  128-GPU / 4-rack config.)
+- The ring bandwidth term uses the **nominal** uplink bundle capacity from config, not the live
+  degraded capacity, so downing uplinks does not shrink it.
+
+Consequences:
+
+- No NCCL algorithm/protocol selection (ring vs tree vs CollNet; LL / LL128 / Simple), so none
+  of the performance cliffs at NCCL's size thresholds appear, and no channel/chunk pipelining is
+  modelled.
+- **No flows are created for the collective**, so it never contends with halo traffic or with
+  itself, and `accumulate` is never called for it — the collective's bytes appear in **zero**
+  NIC or switch-port counters. (This is also what keeps the counter-conservation invariant an
+  exact statement about halo bytes.)
+- **It is not simulated per rank.** Every rank receives the identical `allreduce_s`. All
+  per-rank variation in `allreduce_wait_s` comes from the barrier wait (`arrival − busy`), which
+  originates in the compute and halo phases.
+- The one real coupling: the maximum uplink queueing delay from the halo solution is added to
+  each tree step, which is why a fabric fault lengthens the collective and not just the halo
+  exchange.
+
+This is defensible because these payloads are small and latency-dominated. Making the collective
+topology-aware or per-rank would mean building it as a `FlowSet` and pushing it through
+`solve`/`accumulate` like the halo exchange — a structural change, not a parameter tweak.
 
 ## Calibration
 
