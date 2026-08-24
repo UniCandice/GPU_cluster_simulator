@@ -21,7 +21,20 @@ TEST_MESH = "medium"
 
 @pytest.fixture(scope="session")
 def bundle():
-    return load_config()
+    """The configuration with any allocation block stripped.
+
+    The behavioural suite pins the FULL-cluster reference physics -- 128 ranks,
+    the shipped fault targets, the documented signature matrix. The allocation
+    block in workload.yaml is a user knob, and leaving it live here would let an
+    experiment in a config file silently re-parameterise several dozen tests.
+    Allocation behaviour is tested deliberately, in test_allocation.py, from
+    configs those tests construct themselves.
+    """
+    from dataclasses import replace
+    b = load_config()
+    if b.workload.allocation is not None:
+        b = replace(b, workload=replace(b.workload, allocation=None))
+    return b
 
 
 @pytest.fixture(scope="session")

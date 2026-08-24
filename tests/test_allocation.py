@@ -300,9 +300,14 @@ def test_payload_geometry_follows_the_allocation(bundle, tmp_path, monkeypatch):
     assert p["meta"]["configured_gpus"] == 32
 
 
-def test_payload_geometry_at_full_allocation_is_the_familiar_ring(bundle):
+def test_payload_geometry_at_full_allocation_is_the_familiar_ring(bundle, monkeypatch):
+    import gcsim.dashboard.build as build_mod
     from gcsim.dashboard.build import build_payload
 
+    #  build_payload reads workload.yaml directly; pin it to the stripped
+    #  bundle so the yaml's live allocation knob cannot re-parameterise a test
+    #  that is specifically about the full-cluster geometry.
+    monkeypatch.setattr(build_mod, "load_config", lambda *a, **k: bundle)
     p = build_payload("runs", seed=42)
     geo = p["partitions"]["medium"]
     assert geo["active_racks"] == [0, 1, 2, 3]
