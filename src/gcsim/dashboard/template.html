@@ -642,6 +642,9 @@ function renderChrome() {
       ? " " + m.seed_links.filter(l => l.seed !== m.seed)
           .map(l => `<a href="${l.href}">view ${l.seed}${
             l.n_runs != null ? ` (${l.n_runs})` : ""}</a>`).join(" ")
+        //  index.html is the chooser when several seeds exist; a way back to
+        //  it belongs beside the ways across.
+        + ` <a href="index.html">all seeds</a>`
       : "")],
     ["Generated", m.generated],
   ].map(([k, v]) => `<span><b>${k}:</b> ${v}</span>`).join("");

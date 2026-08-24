@@ -29,8 +29,9 @@ directory per run under `runs/`, prints the comparison tables, and renders
 (the file is still written), or just double-click it later.
 
 With runs from more than one seed on disk you get one page per seed —
-`dashboard/index_seed7.html`, `index_seed42.html` — plus `index.html` for the highest, and each
-header links to the others. A page never mixes seeds.
+`dashboard/index_seed7.html`, `index_seed42.html` — and `index.html` becomes a small chooser
+listing every seed with its run count. A page never mixes seeds, and each page's header links
+to the other seeds and back to the chooser.
 
 Individual pieces:
 
