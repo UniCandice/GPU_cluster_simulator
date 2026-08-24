@@ -107,6 +107,13 @@ header { border-bottom:1px solid var(--border); padding-bottom:16px; margin-bott
 .pill[aria-disabled="true"] { opacity:.4; cursor:not-allowed; }
 .pill[aria-disabled="true"]:hover { background:var(--surface); }
 .coverage { flex:1 0 100%; margin-top:4px; font-size:12px; color:var(--muted); }
+/*  A run made under a different allocation than workload.yaml now configures.
+    Amber, because it is the one situation where the page would otherwise show
+    data that quietly contradicts the configuration beside it.  */
+.stale { margin:0 0 16px; padding:8px 12px; border-radius:7px; font-size:12.5px;
+         line-height:1.5; color:var(--ink-2);
+         background:color-mix(in srgb, var(--warning) 13%, transparent); }
+.stale:empty { display:none; }
 .tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:1px solid var(--border);
         margin-bottom:22px; }
 .tab { border:0; background:none; color:var(--muted); font:inherit; font-size:13.5px;
@@ -240,6 +247,7 @@ ul.ev li::before { content:""; position:absolute; left:5px; top:12px; width:5px;
 </div>
 
 <div class="tabs" id="tabs" role="tablist"></div>
+<div id="staleness"></div>
 <div id="view"></div>
 </div>
 <div id="tip" role="status" aria-live="polite"></div>
@@ -681,6 +689,24 @@ function renderChrome() {
     `<button class="tab" role="tab" data-tab="${i}" aria-selected="${i === state.tab}">${t}</button>`).join("");
   tabs.onclick = e => { const b = e.target.closest("[data-tab]"); if (!b) return;
                         state.tab = +b.dataset.tab; render(); };
+
+  //  Runs persist on disk across configuration edits, so the selected run may
+  //  have been made under a different allocation than workload.yaml now
+  //  declares -- a 128-rank run rendered beside a header claiming 32 of 128
+  //  GPUs, with a fault target the current allocation would have retargeted.
+  //  Say so, loudly, instead of letting the two contradict each other in
+  //  silence. Older runs carry no allocated_gpus field; they were all
+  //  full-cluster, so n_ranks stands in exactly.
+  const sel = run();
+  const ranGpus = sel.summary.allocated_gpus ?? sel.summary.n_ranks;
+  const cfgGpus = m.configured_gpus ?? m.n_ranks;
+  document.getElementById("staleness").innerHTML = ranGpus === cfgGpus ? "" :
+    `<div class="stale"><b>This run predates the current allocation.</b> The
+     <code>${state.scenario}</code> &times; <code>${state.mesh}</code> run on disk used
+     <b>${ranGpus}</b> of ${m.n_ranks} GPUs, but <code>workload.yaml</code> now configures
+     <b>${cfgGpus}</b> &mdash; everything below shows the old run, including any fault target
+     the current allocation would have moved. Regenerate it:
+     <code>python -m gcsim run --scenario ${state.scenario} --mesh ${state.mesh}</code></div>`;
 }
 
 /* --- tab 0: overview ------------------------------------------------------ */

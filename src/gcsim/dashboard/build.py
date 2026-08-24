@@ -567,6 +567,12 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
             "sample_interval_s": cc.telemetry.sample_interval_s,
             "slowdown_c": cc.gpu.thermal_slowdown_c,
             "n_ranks": cc.n_gpus,
+            #  What workload.yaml configures RIGHT NOW, as opposed to what any
+            #  run on disk was made with. Runs persist across config edits, so
+            #  the two can disagree -- and the page must say so rather than
+            #  quietly showing a 128-rank run under a 32-rank configuration.
+            "configured_gpus": (bundle.workload.allocation.n_ranks
+                                if bundle.workload.allocation else cc.n_gpus),
             "gpus_per_node": cc.gpus_per_node,
             "gpus_per_rack": cc.gpus_per_rack,
             "racks": cc.racks,

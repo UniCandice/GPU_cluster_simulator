@@ -296,6 +296,8 @@ def test_payload_geometry_follows_the_allocation(bundle, tmp_path, monkeypatch):
     import math
     assert math.prod(geo["grid"]) == 32
     assert geo["n_racks"] == bundle.cluster.racks
+    #  ...and the page can tell a stale run from the current configuration.
+    assert p["meta"]["configured_gpus"] == 32
 
 
 def test_payload_geometry_at_full_allocation_is_the_familiar_ring(bundle):
@@ -307,3 +309,4 @@ def test_payload_geometry_at_full_allocation_is_the_familiar_ring(bundle):
     assert geo["rack_links"] == [[0, 1], [0, 3], [1, 2], [2, 3]]   # the 4-cycle
     assert [f["kind"] for f in geo["faces"]] == \
         ["intranode"] * 2 + ["intra_domain"] * 2 + ["cross_domain"] * 2
+    assert p["meta"]["configured_gpus"] == 128
