@@ -147,8 +147,8 @@ def _job_block(job: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _rank_block(rank: pd.DataFrame, gpu: pd.DataFrame, runtime: float,
-                n_ranks: int, n_bins: int) -> dict[str, Any]:
+def _rank_block(rank: pd.DataFrame, gpu: pd.DataFrame, job: pd.DataFrame,
+                runtime: float, n_ranks: int, n_bins: int) -> dict[str, Any]:
     """Rank x time heatmaps.
 
     Three channels, chosen because between them they separate every scenario:
@@ -158,11 +158,19 @@ def _rank_block(rank: pd.DataFrame, gpu: pd.DataFrame, runtime: float,
     edges = _edges(runtime, n_bins)
     centres = (edges[:-1] + edges[1:]) / 2.0
 
-    #  Wait comes from rank_performance, which is indexed by timestep. Map it
-    #  onto the same wall-clock bins as the telemetry.
+    #  Wait comes from rank_performance, which is indexed by timestep. Map each
+    #  timestep to its actual wall-clock midpoint from job_performance and bin
+    #  on that. Scaling the iteration NUMBER onto the axis instead would assume
+    #  every timestep costs the same wall time -- exactly what a fault breaks --
+    #  and here it drew the wait step minutes to the right of the injection
+    #  marker while occupancy, temperature and the marker (all binned by real
+    #  timestamps) moved at the true moment.
     iters = rank["iteration"].to_numpy()
     n_iters = int(iters.max())
-    bins = np.clip(((iters - 1) / n_iters * n_bins).astype(int), 0, n_bins - 1)
+    per_iter = job.set_index("iteration")
+    t_iter = (per_iter["timestamp"] + per_iter["iteration_time_s"] / 2.0) \
+        .reindex(iters).to_numpy()
+    bins = np.clip(np.digitize(t_iter, edges) - 1, 0, n_bins - 1)
     ranks = rank["rank_id"].to_numpy()
     wait = np.zeros((n_ranks, n_bins))
     count = np.zeros((n_ranks, n_bins))
@@ -458,7 +466,7 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
             "job": _job_block(job),
             "marks": marks,
             "ranks": _rank_block(frames["rank_performance"], frames["telemetry_gpu"],
-                                 runtime, n_ranks, n_bins),
+                                 job, runtime, n_ranks, n_bins),
             "telemetry": _telemetry_block(frames, runtime, n_bins),
             "fabric": _fabric_block(frames, runtime, n_bins),
             "signature": _signature_row(frames, job),

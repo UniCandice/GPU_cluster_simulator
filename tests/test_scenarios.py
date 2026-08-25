@@ -837,3 +837,41 @@ def test_sparse_run_sets_build_per_seed_pages(bundle, tmp_path):
     page = paths[1].read_text(encoding="utf-8")
     assert '"seed_links":[{"seed":7,"href":"index_seed7.html","n_runs":1},' \
            '{"seed":8,"href":"index_seed8.html","n_runs":1}]' in page
+
+
+def test_wait_heatmap_step_aligns_with_injection_marker(bundle, tmp_path):
+    """The wait channel must sit on the same wall-clock axis as the marker.
+
+    The wait rows used to be placed by iteration NUMBER scaled onto the axis,
+    which assumes every timestep costs the same wall time. A fault breaks that
+    assumption by definition: gpu_degradation lengthens every post-injection
+    timestep, so iteration 350 sits at 30% of the wall clock but 35% of the
+    count, and the wait step rendered several bins to the right of the
+    injection marker -- a phantom delay, while occupancy and temperature
+    (binned by real timestamps) moved at the true moment.
+    """
+    import numpy as np
+    from gcsim.dashboard.build import build_payload
+    from gcsim.scenarios import run_scenario
+
+    runs = tmp_path / "runs"
+    run_scenario("gpu_degradation", mesh="medium", seed=42, bundle=bundle, out_dir=runs)
+    run = build_payload(runs, seed=42)["runs"]["gpu_degradation__medium"]
+
+    inj_t = float(run["marks"][0]["t"])
+    centres = np.asarray(run["ranks"]["t"], dtype=float)
+    width = float(centres[1] - centres[0])
+    fleet_wait = np.asarray(run["ranks"]["wait"], dtype=float).mean(axis=0)
+
+    #  Baseline from bins that end comfortably before the injection.
+    pre = fleet_wait[centres < inj_t - width]
+    assert pre.size >= 3
+    stepped = np.flatnonzero(fleet_wait > max(3.0 * pre.mean(), pre.mean() + 5.0))
+    assert stepped.size, "no wait step found at all"
+
+    #  The step is physically instantaneous (the victim slows in the injection
+    #  iteration itself), so the first elevated bin must be the one holding the
+    #  injection time -- one bin of slack for the boundary bin's blend.
+    assert abs(centres[stepped[0]] - inj_t) <= 1.5 * width, (
+        f"wait step at t={centres[stepped[0]]:.1f}s but injection at "
+        f"t={inj_t:.1f}s (bin width {width:.2f}s)")
