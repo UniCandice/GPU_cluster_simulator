@@ -90,33 +90,6 @@ custom `--out` runs directory gets a sibling `dashboard/` of its own, never the 
 
 ---
 
-## Coverage summary
-
-Everything the brief asks for, and where it lives:
-
-| Requirement | Where |
-|---|---|
-| Cluster topology: racks, nodes, GPUs, network domains | 4 racks × 4 nodes × 8 GPUs; one leaf switch per rack makes the rack a network *and* thermal domain — [`configs/cluster.yaml`](configs/cluster.yaml), `topology.py`, `routing.py` |
-| Workload phases: data loading, compute, communication, checkpointing | DATA_LOAD → per timestep HALO_EXCHANGE, COMPUTE, ALLREDUCE, periodic field OUTPUT to shared storage — [The model](#the-model) |
-| Rank- and job-level performance; slow rank on a synchronised job | `rank_performance` / `job_performance` tables; the barrier identity `iter_time = max(arrival) + collective + output` makes one slow rank cost the whole job — the [straggler amplification](#tests) test pins the exact relationship |
-| Telemetry: utilisation, memory, power, temperature, throttling, network counters, storage latency, node pressure | Nine Parquet tables, every value derived from physical state — [`TELEMETRY.md`](TELEMETRY.md) |
-| Healthy + ≥3 degradation scenarios + a legitimate change | Six: healthy, rank-level straggler (episodic cohort), rack network-domain degradation, thermal throttling, GPU reliability degradation, and `phase_change` — an output campaign that is *not* a fault and is diagnosed as such — [Scenarios](#scenarios) |
-| Runnable source, clear setup | [Quick start](#quick-start): `pip install -e .`, one script runs everything |
-| Seeded, reproducible | Byte-identical across runs; identity-keyed streams make healthy vs faulted runs directly diffable — [Reproducibility](#reproducibility) |
-| Tests for key behaviour | 125 tests, including structural ones (faults *cannot* write telemetry; counters conserve; phases sum exactly) — [Tests](#tests) |
-| Script running healthy + degradation scenarios | `scripts/run_all.py` — 18 runs, comparison tables, self-contained HTML dashboard |
-| README: model, assumptions, limitations | [The model](#the-model), [Assumptions](#assumptions), [Known limitations](#known-limitations) |
-
-Against the assessment criteria specifically: causality is *enforced*, not aspired to — fault
-injectors can only perturb physical state, and an import-graph test proves they have no path to
-any telemetry-producing code. Topology and synchronisation carry real consequences: placement
-decides which halo faces cross NVLink, leaf or spine, the collective's latency is
-placement-aware, and every scenario's telemetry pattern is distinct enough that a telemetry-only
-classifier separates all 18 runs from ground truth — including refusing to call the legitimate
-phase change a fault.
-
----
-
 ## The model
 
 ### Cluster
