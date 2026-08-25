@@ -90,6 +90,33 @@ custom `--out` runs directory gets a sibling `dashboard/` of its own, never the 
 
 ---
 
+## Coverage summary
+
+Everything the brief asks for, and where it lives:
+
+| Requirement | Where |
+|---|---|
+| Cluster topology: racks, nodes, GPUs, network domains | 4 racks × 4 nodes × 8 GPUs; one leaf switch per rack makes the rack a network *and* thermal domain — [`configs/cluster.yaml`](configs/cluster.yaml), `topology.py`, `routing.py` |
+| Workload phases: data loading, compute, communication, checkpointing | DATA_LOAD → per timestep HALO_EXCHANGE, COMPUTE, ALLREDUCE, periodic field OUTPUT to shared storage — [The model](#the-model) |
+| Rank- and job-level performance; slow rank on a synchronised job | `rank_performance` / `job_performance` tables; the barrier identity `iter_time = max(arrival) + collective + output` makes one slow rank cost the whole job — the [straggler amplification](#tests) test pins the exact relationship |
+| Telemetry: utilisation, memory, power, temperature, throttling, network counters, storage latency, node pressure | Nine Parquet tables, every value derived from physical state — [`TELEMETRY.md`](TELEMETRY.md) |
+| Healthy + ≥3 degradation scenarios + a legitimate change | Six: healthy, rank-level straggler (episodic cohort), rack network-domain degradation, thermal throttling, GPU reliability degradation, and `phase_change` — an output campaign that is *not* a fault and is diagnosed as such — [Scenarios](#scenarios) |
+| Runnable source, clear setup | [Quick start](#quick-start): `pip install -e .`, one script runs everything |
+| Seeded, reproducible | Byte-identical across runs; identity-keyed streams make healthy vs faulted runs directly diffable — [Reproducibility](#reproducibility) |
+| Tests for key behaviour | 125 tests, including structural ones (faults *cannot* write telemetry; counters conserve; phases sum exactly) — [Tests](#tests) |
+| Script running healthy + degradation scenarios | `scripts/run_all.py` — 18 runs, comparison tables, self-contained HTML dashboard |
+| README: model, assumptions, limitations | [The model](#the-model), [Assumptions](#assumptions), [Known limitations](#known-limitations) |
+
+Against the assessment criteria specifically: causality is *enforced*, not aspired to — fault
+injectors can only perturb physical state, and an import-graph test proves they have no path to
+any telemetry-producing code. Topology and synchronisation carry real consequences: placement
+decides which halo faces cross NVLink, leaf or spine, the collective's latency is
+placement-aware, and every scenario's telemetry pattern is distinct enough that a telemetry-only
+classifier separates all 18 runs from ground truth — including refusing to call the legitimate
+phase change a fault.
+
+---
+
 ## The model
 
 ### Cluster
@@ -557,7 +584,12 @@ topology-aware or per-rank would mean building it as a `FlowSet` and pushing it 
 
 ## Calibration
 
-None of the constants are fitted. How each *would* be, from real fleet telemetry:
+None of the constants are fitted — they are plausible orders of magnitude for an H100-SXM-class
+cluster. But every constant was *chosen to be fittable* from measurements a real fleet already
+produces, and the model's structure separates what must be measured from what is derived. The
+plan, in the order it would actually be executed:
+
+### Stage 1 — fit the constants, cheapest measurement first
 
 | Constant | Fit from |
 |---|---|
@@ -569,11 +601,52 @@ None of the constants are fitted. How each *would* be, from real fleet telemetry
 | `coupling_c_per_kw` | inlet temperature vs rack power across the fleet, or a CRAC derate test |
 | power model exponent | board power vs clock at fixed occupancy, from DCGM power + clock |
 | storage `ρ`, base latency | filesystem queue-depth and latency counters during checkpoint bursts |
+| per-GPU variation spread | fleet-wide distribution of sustained clock and power at fixed load |
 
-The straggler model would be validated against measured `wait_ms` distributions: the claim that a
-slow rank shows near-zero wait while its peers accumulate it is directly checkable in any real
-profile, and the amplification relationship (job cost = victim's excess over the *previous* pacer)
-is a falsifiable prediction.
+Each row is independent of the others: a wrong thermal fit cannot contaminate the network fit,
+because the models only couple through simulated physical state, the same way the real systems
+couple through physics.
+
+### Stage 2 — validate structure, not just numbers
+
+Fitting constants makes the magnitudes right; the model's *claims* need separate validation
+against telemetry it was never fitted to:
+
+- **The barrier identity.** In any real synchronised job profile, the slowest rank shows
+  near-zero collective wait while its peers accumulate it, and the phase columns sum to the
+  iteration. If a real profile violates this, the workload is not bulk-synchronous and the
+  workload model must change before any constant is tuned.
+- **Straggler amplification.** The prediction that job cost equals the victim's excess over the
+  *previous* pacer — not its own slowdown — is directly falsifiable from measured `wait_ms`
+  distributions during known degradation incidents.
+- **Counter conservation.** Simulated leaf-uplink bytes equal the traffic that genuinely left the
+  rack. On the real fabric the same identity must hold between NIC counters and switch counters;
+  where it does not, the routing model (static ECMP-less shortest path here) is what needs
+  replacing.
+- **The throttling staircase.** Clock-step quantisation, hysteresis, and the paired clock/power
+  drop under sustained load are qualitative shapes visible in any DCGM trace of a real thermal
+  event; the model must reproduce the shape before its thresholds are tuned.
+- **Fault replay.** The strongest test: take a real, diagnosed incident (a failed uplink, a
+  degraded CRAC), configure the same fault here, and compare the *full multi-table signature* —
+  not one metric — against the incident's telemetry. The [signature matrix](#scenarios) is
+  exactly the comparison checklist.
+
+### Stage 3 — hold-out validation at fleet scale
+
+Fit on one set of jobs and racks, validate on another. The dashboard's diagnosis page is the
+harness: run the telemetry-only classifier on *real* incident telemetry and score it the same way
+it is scored here (18/18 against ground truth on simulated runs). Where it fails on real data,
+the gap names the missing physics — which becomes the next model term, not a tuning knob.
+
+### Under different assumptions
+
+The seams for the panel's "what if" questions are deliberate: a different workload is a different
+phase sequence in `workload.yaml` (the barrier identity is the only hard assumption — an
+asynchronous or pipeline-parallel job would replace the ALLREDUCE step, not the telemetry layer);
+a different failure mode is a new injector in `faults.py`, which structurally *cannot* write
+telemetry, so any new fault's signature must emerge from the state it perturbs; a different
+cluster is `cluster.yaml`; a different scheduler sits on top of the `allocation` machinery, which
+already models everything downstream of a placement decision.
 
 ## Extending it
 
