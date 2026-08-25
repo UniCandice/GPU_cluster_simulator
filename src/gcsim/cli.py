@@ -49,15 +49,19 @@ def _print_summary(result) -> None:
     print(f"    discriminating channels: {', '.join(sorted(set(d['discriminators'])))}")
 
 
-def _finish_with_dashboard(runs_dir: Path, no_open: bool) -> None:
+def _finish_with_dashboard(runs_dir: Path, no_open: bool, seed: int | None = None) -> None:
     """Build and show the dashboard for whatever `runs_dir` now holds.
 
     Runs after any command that wrote runs to disk, so a single `gcsim run` ends
     at a rendered page rather than at a Parquet path -- the sparse handling in
     the dashboard means even one scenario renders, with the missing
     combinations greyed out. A custom runs directory gets a sibling dashboard
-    next to it; only the default runs directory builds to the repo's own
-    `dashboard/index.html`, so a scratch run can never overwrite the real page.
+    next to it; only the default runs directory builds into the repo's own
+    `dashboard/`, so a scratch run can never overwrite the real pages.
+
+    Seeds build to fully separate pages, so the one that opens is the page for
+    the seed THIS command just simulated -- not whichever file happened to be
+    written last.
     """
     from gcsim.dashboard.build import DEFAULT_OUT, build_dashboard, open_in_browser
 
@@ -67,8 +71,10 @@ def _finish_with_dashboard(runs_dir: Path, no_open: bool) -> None:
     print(f"\n  dashboard  (Generated: {stamp})")
     for p in paths:
         print(f"    {p}  ({p.stat().st_size / 1e6:.1f} MB)")
-    if not no_open and open_in_browser(paths[-1]):
-        print(f"    opened {paths[-1].name} in your browser")
+    show = next((p for p in paths if seed is not None
+                 and p.stem.endswith(f"_seed{seed}")), paths[-1])
+    if not no_open and open_in_browser(show):
+        print(f"    opened {show.name} in your browser")
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -85,7 +91,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(table.to_string(index=False, float_format=lambda v: f"{v:,.4f}"))
     #  --no-write implies no dashboard: nothing landed on disk to build from.
     if result.path and not args.no_dashboard:
-        _finish_with_dashboard(out, args.no_open)
+        _finish_with_dashboard(out, args.no_open, seed=args.seed)
     return 0
 
 
@@ -104,7 +110,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
                | (~df["is_fault"] & (df["diagnosis_verdict"] != "HARDWARE_FAULT"))).sum()
     print(f"\n  diagnosis agreed with ground truth on {correct}/{len(df)} runs")
     if out is not None and not args.no_dashboard:
-        _finish_with_dashboard(out, args.no_open)
+        _finish_with_dashboard(out, args.no_open, seed=args.seed)
     return 0
 
 

@@ -123,11 +123,14 @@ def main(argv: list[str] | None = None) -> int:
         for path in paths:
             print(f"    {path}  ({path.stat().st_size / 1e6:.1f} MB)")
 
-        #  Open the canonical page -- the last one written. Failing to reach a
-        #  browser is not a failed run, so this only ever changes what is printed.
+        #  Seeds build to fully separate pages; open the one for the seed this
+        #  sweep just produced. Failing to reach a browser is not a failed run,
+        #  so this only ever changes what is printed.
         if not args.no_open:
-            if open_in_browser(paths[-1]):
-                print(f"\n  opened {paths[-1].name} in your browser")
+            show = next((p for p in paths if p.stem.endswith(f"_seed{args.seed}")),
+                        paths[-1])
+            if open_in_browser(show):
+                print(f"\n  opened {show.name} in your browser")
             else:
                 print("\n  no browser available; open the file above by hand")
 

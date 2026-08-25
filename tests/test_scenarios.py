@@ -829,14 +829,20 @@ def test_sparse_run_sets_build_per_seed_pages(bundle, tmp_path):
     #  Geometry is config-derived, so it is complete even on a sparse seed.
     assert sorted(payload["partitions"]) == sorted(bundle.meshes)
 
-    paths, _ = build_dashboard(runs, out_path=tmp_path / "dash" / "index.html")
-    assert [q.name for q in paths] == ["index_seed7.html", "index_seed8.html", "index.html"]
-
-    #  Every page carries every seed's link WITH its run count, so a reader can
-    #  tell a one-run seed from a full sweep before clicking through.
+    #  Seeds are COMPLETELY separate (a deliberate layout change): every seed
+    #  gets its own standalone index_seed{N}.html, there is no chooser or
+    #  shared index.html, and pages carry no links to each other. A stale
+    #  index.html from the earlier layout must be removed, not orphaned at the
+    #  best-known filename.
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    (dash / "index.html").write_text("stale chooser from an older build")
+    paths, _ = build_dashboard(runs, out_path=dash / "index.html")
+    assert [q.name for q in paths] == ["index_seed7.html", "index_seed8.html"]
+    assert not (dash / "index.html").exists()
     page = paths[1].read_text(encoding="utf-8")
-    assert '"seed_links":[{"seed":7,"href":"index_seed7.html","n_runs":1},' \
-           '{"seed":8,"href":"index_seed8.html","n_runs":1}]' in page
+    assert "seed_links" not in page
+    assert '"seed":8' in page
 
 
 def test_wait_heatmap_step_aligns_with_injection_marker(bundle, tmp_path):

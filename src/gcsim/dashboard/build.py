@@ -651,15 +651,11 @@ def build_dashboard(runs_dir: Path | str,
     show whichever seed happened to load last while its header claimed to show
     both.
 
-    With a single seed on disk the output is `dashboard/index.html`, exactly as
-    before. With several, each gets `index_seed{N}.html` and the plain
-    `index.html` becomes a small chooser listing every seed with its run count
-    -- never a silent copy of one of them, which left readers on the wrong
-    seed's data without knowing it.
-
-    The returned list always ends with that plain `index.html`, which is the
-    canonical entry point. Callers wanting to show one page should open the
-    last.
+    The seeds are COMPLETELY separate: every seed always gets
+    `index_seed{N}.html` (derived from `out_path`'s stem), each page is
+    self-contained with no links to the others, and no shared entry point is
+    written. A plain `index.html` left behind by an older build is removed so
+    a bookmarked chooser cannot outlive the layout that had one.
 
     The stamp is returned rather than discarded so a caller can print it: the
     output paths never change between builds, so it is the only thing that tells
@@ -680,76 +676,21 @@ def build_dashboard(runs_dir: Path | str,
     if marker not in html:
         raise ValueError(f"template {TEMPLATE} is missing the data marker")
 
-    def path_for(seed: int) -> Path:
-        return out if len(seeds) == 1 else out.with_name(f"{out.stem}_seed{seed}{out.suffix}")
-
-    #  Every page lists every seed, so the header can offer one-click switching
-    #  without the reader having to guess a filename. The run count rides along
-    #  because seeds are not all alike any more: "view 8 (1)" tells the reader
-    #  that page holds a single run before they click through to it.
-    others = [{"seed": s, "href": path_for(s).name, "n_runs": counts[s]} for s in seeds]
-
     written: list[Path] = []
     stamp = ""
-    bundle = load_config()
-    total = len(bundle.scenarios) * len(bundle.meshes)
     for seed in seeds:
         payload = build_payload(runs_dir, seed=seed)
-        payload["meta"]["seed_links"] = others
         stamp = payload["meta"]["generated"]
         blob = json.dumps(payload, separators=(",", ":"), allow_nan=False)
         page = html.replace(marker, blob)
 
-        target = path_for(seed)
+        target = out.with_name(f"{out.stem}_seed{seed}{out.suffix}")
         target.write_text(page, encoding="utf-8")
         written.append(target)
 
-    #  With several seeds, index.html is a CHOOSER, not a copy of one of them.
-    #  It used to silently be the highest seed's page, and a reader who opened
-    #  it after regenerating a different seed's run was looking at the wrong
-    #  data with nothing saying so. No data is combined -- each seed keeps its
-    #  own complete page -- the entry point just says what is on disk and lets
-    #  the reader pick.
-    if len(seeds) > 1:
-        out.write_text(_seed_chooser_html(seeds, counts, total, stamp), encoding="utf-8")
-        written.append(out)
+    #  Earlier layouts wrote `index.html` -- first as the single seed's page,
+    #  then as a chooser. Leaving one behind would keep serving stale data at
+    #  the best-known filename, so it is deleted rather than orphaned.
+    out.unlink(missing_ok=True)
 
     return written, stamp
-
-
-def _seed_chooser_html(seeds: list[int], counts: dict[int, int],
-                       total: int, stamp: str) -> str:
-    """The index.html landing page for a multi-seed runs directory."""
-    rows = "\n".join(
-        f'<a class="row" href="index_seed{s}.html"><b>Seed {s}</b>'
-        f'<span>{counts[s]} of {total} scenario &times; mesh runs</span>'
-        f'<span class="go">open &rarr;</span></a>'
-        for s in seeds)
-    return f"""<meta charset="utf-8">
-<meta http-equiv="Cache-Control" content="no-store">
-<title>GPU Cluster Simulator — seeds</title>
-<style>
-:root {{ color-scheme: light dark; }}
-body {{ margin:0; padding:48px 24px; display:flex; justify-content:center;
-       font:14px/1.5 "IBM Plex Sans", system-ui, sans-serif;
-       background:light-dark(#f9f9f7, #0d0d0d); color:light-dark(#0b0b0b, #ececea); }}
-main {{ width:min(560px, 100%); }}
-h1 {{ font-size:20px; margin:0 0 6px; }}
-p  {{ margin:0 0 22px; color:light-dark(#52514e, #b4b2ac); font-size:13px; }}
-.row {{ display:flex; align-items:baseline; gap:14px; padding:13px 16px; margin-bottom:8px;
-       border:1px solid light-dark(rgba(11,11,11,.12), rgba(236,236,234,.14));
-       border-radius:9px; text-decoration:none; color:inherit;
-       background:light-dark(#fcfcfb, #1a1a19); }}
-.row:hover {{ background:light-dark(#f4f3f0, #232322); }}
-.row span {{ color:light-dark(#898781, #8f8d87); font-size:12.5px; }}
-.row .go {{ margin-left:auto; }}
-footer {{ margin-top:18px; font-size:11.5px; color:light-dark(#898781, #8f8d87); }}
-</style>
-<main>
-<h1>GPU Cluster Simulator</h1>
-<p>One dashboard per seed &mdash; a page never mixes runs from different seeds.
-Pick the seed to inspect; each page links to the others from its header.</p>
-{rows}
-<footer>Generated: {stamp}</footer>
-</main>
-"""

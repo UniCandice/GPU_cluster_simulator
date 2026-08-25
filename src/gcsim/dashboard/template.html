@@ -640,19 +640,12 @@ function renderChrome() {
   document.getElementById("meta").innerHTML = [
     ["Cluster", m.cluster], ["GPU", m.gpu_model], ["Workload", m.workload],
     ["Telemetry", m.sample_interval_s + " s sample interval"],
-    //  One seed per page. A page carrying two would be showing whichever run
-    //  loaded last, since runs are keyed by scenario and mesh with no seed in
-    //  the key. The other seeds are offered as links instead of merged in --
-    //  with their run counts, because seeds are not all alike: "view 8 (1)"
-    //  says that page holds a single run before the reader clicks through.
-    ["Seed", m.seed + (m.seed_links && m.seed_links.length > 1
-      ? " " + m.seed_links.filter(l => l.seed !== m.seed)
-          .map(l => `<a href="${l.href}">view ${l.seed}${
-            l.n_runs != null ? ` (${l.n_runs})` : ""}</a>`).join(" ")
-        //  index.html is the chooser when several seeds exist; a way back to
-        //  it belongs beside the ways across.
-        + ` <a href="index.html">all seeds</a>`
-      : "")],
+    //  One seed per page, and pages are fully independent of each other. A
+    //  page carrying two seeds would be showing whichever run loaded last,
+    //  since runs are keyed by scenario and mesh with no seed in the key;
+    //  other seeds live in their own index_seed{N}.html files, deliberately
+    //  unlinked from here.
+    ["Seed", m.seed],
     ["Generated", m.generated],
   ].map(([k, v]) => `<span><b>${k}:</b> ${v}</span>`).join("");
 

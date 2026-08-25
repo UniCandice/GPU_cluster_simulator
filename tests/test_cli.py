@@ -18,8 +18,10 @@ def test_run_finishes_with_a_dashboard(bundle, tmp_path):
     assert rc == 0
 
     #  A custom runs directory gets a sibling dashboard, never the repo's own.
-    page = tmp_path / "dashboard" / "index.html"
+    #  Every seed builds its own standalone page; no index.html is written.
+    page = tmp_path / "dashboard" / "index_seed7.html"
     assert page.exists()
+    assert not (tmp_path / "dashboard" / "index.html").exists()
     html = page.read_text(encoding="utf-8")
     assert "healthy__coarse" in html
     assert '"seed":7' in html
