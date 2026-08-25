@@ -12,7 +12,11 @@ six fault scenarios in `configs/scenarios.yaml`. The job does not have to fill t
 optional `allocation` block runs it on any slice — a rank count, a set of racks, or a list of
 nodes — with `packed` or `scatter` placement, while unallocated GPUs sit idle and still appear in
 telemetry. Change the YAML and the topology, routing, partitioning and telemetry all follow;
-nothing is hard-coded to one cluster.
+nothing is hard-coded to one cluster. This flexibility is deliberate groundwork for the next
+stage of the simulator: **job scheduling**. A scheduler is precisely a process that decides
+allocations — which ranks, on which nodes, placed how — and everything downstream of that
+decision (partitioning, routing, contention, telemetry, idle GPUs) is already modelled here, so
+scheduling policies can be layered on top and compared without touching the physics.
 
 **Get started in two commands** (full details in [Quick start](#quick-start) below):
 
