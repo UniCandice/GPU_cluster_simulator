@@ -5,6 +5,42 @@ bulk-synchronous CFD job runs on a simulated 128-GPU cluster; the simulator mode
 behaviour, cluster topology, resource contention and infrastructure faults combine to produce
 observable telemetry.
 
+**The cluster is flexibly configured.** Everything that defines an experiment lives in YAML, not
+code: the cluster shape (racks × nodes × GPUs, link bandwidths, thermal constants) in
+`configs/cluster.yaml`, the workload and its mesh resolutions in `configs/workload.yaml`, and the
+six fault scenarios in `configs/scenarios.yaml`. The job does not have to fill the cluster: an
+optional `allocation` block runs it on any slice — a rank count, a set of racks, or a list of
+nodes — with `packed` or `scatter` placement, while unallocated GPUs sit idle and still appear in
+telemetry. Change the YAML and the topology, routing, partitioning and telemetry all follow;
+nothing is hard-coded to one cluster.
+
+**Get started in two commands** (full details in [Quick start](#quick-start) below):
+
+```bash
+python -m pip install -e .
+python scripts/run_all.py --seed 42   # 18 runs + HTML dashboard, opens in your browser
+```
+
+**What it is for.** Beyond the study shipped in this repo, the simulator is built as a foundation
+for fleet work:
+
+- **Validate against real fleet telemetry.** Every model constant is chosen to be fittable from
+  measurements a real fleet already produces — DCGM counters, microbenchmarks, thermal step
+  responses. The [Calibration](#calibration) section lists, constant by constant, which
+  measurement pins it. Once calibrated, the simulator becomes a testable model of the fleet
+  rather than a toy.
+- **Simulate the fleet for analysis.** With a calibrated model you can ask what-if questions
+  offline that are expensive or risky to ask in production: how a placement strategy changes
+  collective latency, how a mesh refinement shifts the compute/communication balance, how a
+  degraded uplink or a failing cooling loop propagates into job-level slowdown — all seeded and
+  byte-reproducible.
+- **Create datasets for GPU fleet intelligence.** Each run writes labelled Parquet telemetry:
+  realistic multi-table observations plus per-run ground truth (which fault, which tier, which
+  GPU or rack). That is exactly the training and benchmark data that anomaly detectors, fault
+  classifiers and diagnosis models need but that real fleets rarely have labels for. The
+  built-in telemetry-only diagnosis (18/18 against ground truth here) is the rule-based baseline
+  any learned model should beat.
+
 **The governing rule:** every telemetry value is *derived from simulated physical state*. No field
 is ever written by a scenario. Fault injectors perturb physical state only — link bandwidth,
 cooling efficiency, achievable SM throughput, memory bandwidth — and telemetry is an observation of
