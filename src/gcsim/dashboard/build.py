@@ -455,16 +455,41 @@ def build_payload(runs_dir: Path | str, seed: int | None = None) -> dict[str, An
 
         events = frames["events"]
         marks = []
+        #  The scenario description shown on the page is the static yaml blurb,
+        #  written for the shipped full-cluster runs. Under an allocation it can
+        #  narrate things this run provably did not do -- the wrong target rack,
+        #  congestion on links that carried no traffic -- so any divergence the
+        #  run itself recorded is surfaced beside it rather than left to fight
+        #  the telemetry.
+        notes = []
         for _, row in events[events["event_type"] == "INJECTION_APPLIED"].iterrows():
             body = json.loads(row["payload"])
             marks.append({"t": round(float(row["timestamp"]), 2),
                           "iteration": int(body.get("iteration", 0)),
                           "label": body.get("type", "injection")})
+            if "retargeted_from" in body:
+                actual = body.get("rack_id") or body.get("gpu_id", "?")
+                notes.append(
+                    f"In this run the scenario's configured target "
+                    f"({body['retargeted_from']}) hosts no ranks under the active "
+                    f"allocation, so the injection was retargeted to {actual} -- "
+                    f"seed-chosen and recorded in the event trace. The description "
+                    f"above narrates the shipped full-cluster target.")
+        job_racks = sorted({g[: g.index("n")]
+                            for g in frames["rank_performance"]["gpu_id"].unique()})
+        if len(job_racks) == 1 and any(m["label"] == "leaf_uplink_failure" for m in marks):
+            notes.append(
+                f"All {n_ranks} ranks of this run sit inside {job_racks[0]}, so none of "
+                f"the job's halo traffic crosses the failed spine uplinks: the dead ports "
+                f"are visible in switch telemetry (link_up) but carry no traffic, and the "
+                f"congestion described above does not occur here. A fault can be present "
+                f"without impacting the job.")
 
         runs[key] = {
             "summary": summary,
             "job": _job_block(job),
             "marks": marks,
+            "notes": notes,
             "ranks": _rank_block(frames["rank_performance"], frames["telemetry_gpu"],
                                  job, runtime, n_ranks, n_bins),
             "telemetry": _telemetry_block(frames, runtime, n_bins),

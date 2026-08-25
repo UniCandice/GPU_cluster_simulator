@@ -57,7 +57,7 @@ telemetry-producing module) and asserted by a test.
 
 ```bash
 python -m pip install -e .        # numpy, pandas, pyarrow, pyyaml — no compiler, no GPU
-python -m pytest -q               # 125 tests, ~50 s
+python -m pytest -q               # 127 tests, ~50 s
 
 python scripts/run_all.py --seed 42
 ```

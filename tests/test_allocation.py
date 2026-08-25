@@ -315,3 +315,43 @@ def test_payload_geometry_at_full_allocation_is_the_familiar_ring(bundle, monkey
     assert [f["kind"] for f in geo["faces"]] == \
         ["intranode"] * 2 + ["intra_domain"] * 2 + ["cross_domain"] * 2
     assert p["meta"]["configured_gpus"] == 128
+
+
+# ---------------------------------------------------------------------------
+# per-run divergence notes beside the static scenario description
+# ---------------------------------------------------------------------------
+
+def test_single_rack_uplink_run_carries_honest_notes(bundle, tmp_path, monkeypatch):
+    """The description blurb must not stand uncorrected when the run diverges.
+
+    The scenario description on the page is static yaml text written for the
+    full cluster: it names rack 2 and narrates congestion. A `racks: [0]` job
+    retargets the injection to r0 and sends no traffic over the failed
+    uplinks, so the run must say both things beside the blurb instead of
+    letting the telemetry silently contradict it.
+    """
+    from dataclasses import replace as dc_replace
+    import gcsim.dashboard.build as build_mod
+    from gcsim.scenarios import run_scenario
+
+    alloc = AllocationConfig(n_ranks=32, racks=(0,))
+    b2 = dc_replace(bundle, workload=dc_replace(bundle.workload, allocation=alloc))
+    run_scenario("network_domain", mesh="coarse", seed=9, bundle=b2,
+                 out_dir=tmp_path / "runs")
+
+    monkeypatch.setattr(build_mod, "load_config", lambda *a, **k: b2)
+    notes = build_mod.build_payload(tmp_path / "runs", seed=9)[
+        "runs"]["network_domain__coarse"]["notes"]
+
+    assert len(notes) == 2
+    assert "retargeted to r0" in notes[0] and "r2" in notes[0]
+    assert "sit inside r0" in notes[1] and "carry no traffic" in notes[1]
+
+
+def test_full_cluster_runs_carry_no_notes(bundle, monkeypatch):
+    """At full allocation nothing diverges, so nothing may be annotated."""
+    import gcsim.dashboard.build as build_mod
+
+    monkeypatch.setattr(build_mod, "load_config", lambda *a, **k: bundle)
+    p = build_mod.build_payload("runs", seed=42)
+    assert all(r["notes"] == [] for r in p["runs"].values())

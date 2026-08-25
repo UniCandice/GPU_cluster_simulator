@@ -114,6 +114,13 @@ header { border-bottom:1px solid var(--border); padding-bottom:16px; margin-bott
          line-height:1.5; color:var(--ink-2);
          background:color-mix(in srgb, var(--warning) 13%, transparent); }
 .stale:empty { display:none; }
+/*  Per-run divergence from the static scenario blurb above it (retargeted
+    injection, single-rack job under an uplink fault). Derived from the run's
+    own event trace at build time -- never asserted.  */
+.run-note { margin:10px 0 0; padding:7px 11px; border-left:3px solid var(--warning);
+            border-radius:0 6px 6px 0; font-size:12.5px; line-height:1.55;
+            color:var(--ink-2);
+            background:color-mix(in srgb, var(--warning) 9%, transparent); }
 .tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:1px solid var(--border);
         margin-bottom:22px; }
 .tab { border:0; background:none; color:var(--muted); font:inherit; font-size:13.5px;
@@ -816,6 +823,7 @@ function tabTimeline() {
   document.getElementById("view").innerHTML = `
     <div class="card">
       <h2>${s.label}</h2><p class="sub">${s.description}</p>
+      ${(r.notes || []).map(n => `<p class="run-note">${n}</p>`).join("")}
     </div>
     ${chartCard("Where each timestep goes",
       "Stack height is the timestep itself: the four bands account for all of it, so nothing is hidden.")}
