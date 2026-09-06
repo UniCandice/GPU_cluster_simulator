@@ -1,50 +1,6 @@
 {
  "ablations": {
   "+absolute": {
-   "macro_f1": 0.9972127377883074,
-   "per_class_f1": {
-    "gpu_degradation": 0.9921259842519685,
-    "healthy": 1.0,
-    "network_domain": 0.9911504424778761,
-    "phase_change": 1.0,
-    "straggler": 1.0,
-    "thermal": 1.0
-   }
-  },
-  "+ckpt_rel": {
-   "macro_f1": 0.9972127377883074,
-   "per_class_f1": {
-    "gpu_degradation": 0.9921259842519685,
-    "healthy": 1.0,
-    "network_domain": 0.9911504424778761,
-    "phase_change": 1.0,
-    "straggler": 1.0,
-    "thermal": 1.0
-   }
-  },
-  "-fabric": {
-   "macro_f1": 0.9972127377883074,
-   "per_class_f1": {
-    "gpu_degradation": 0.9921259842519685,
-    "healthy": 1.0,
-    "network_domain": 0.9911504424778761,
-    "phase_change": 1.0,
-    "straggler": 1.0,
-    "thermal": 1.0
-   }
-  },
-  "-gpu_telemetry": {
-   "macro_f1": 0.9547543373588926,
-   "per_class_f1": {
-    "gpu_degradation": 0.9921259842519685,
-    "healthy": 0.9481481481481482,
-    "network_domain": 0.9911504424778761,
-    "phase_change": 1.0,
-    "straggler": 1.0,
-    "thermal": 0.7971014492753623
-   }
-  },
-  "-rank_performance": {
    "macro_f1": 1.0,
    "per_class_f1": {
     "gpu_degradation": 1.0,
@@ -55,85 +11,186 @@
     "thermal": 1.0
    }
   },
-  "-throttle": {
-   "macro_f1": 0.9972127377883074,
+  "+ckpt_rel": {
+   "macro_f1": 1.0,
    "per_class_f1": {
-    "gpu_degradation": 0.9921259842519685,
+    "gpu_degradation": 1.0,
     "healthy": 1.0,
-    "network_domain": 0.9911504424778761,
+    "network_domain": 1.0,
+    "phase_change": 1.0,
+    "straggler": 1.0,
+    "thermal": 1.0
+   }
+  },
+  "-fabric": {
+   "macro_f1": 0.9696827575825635,
+   "per_class_f1": {
+    "gpu_degradation": 0.9960474308300395,
+    "healthy": 0.9735642661804923,
+    "network_domain": 0.8484848484848485,
+    "phase_change": 1.0,
+    "straggler": 1.0,
+    "thermal": 1.0
+   }
+  },
+  "-gpu_telemetry": {
+   "macro_f1": 0.9555168352612813,
+   "per_class_f1": {
+    "gpu_degradation": 1.0,
+    "healthy": 0.9427230046948357,
+    "network_domain": 1.0,
+    "phase_change": 1.0,
+    "straggler": 1.0,
+    "thermal": 0.7903780068728522
+   }
+  },
+  "-rank_performance": {
+   "macro_f1": 0.987911078866836,
+   "per_class_f1": {
+    "gpu_degradation": 1.0,
+    "healthy": 0.9789674952198852,
+    "network_domain": 1.0,
+    "phase_change": 1.0,
+    "straggler": 0.9519832985386222,
+    "thermal": 0.9965156794425087
+   }
+  },
+  "-throttle": {
+   "macro_f1": 1.0,
+   "per_class_f1": {
+    "gpu_degradation": 1.0,
+    "healthy": 1.0,
+    "network_domain": 1.0,
     "phase_change": 1.0,
     "straggler": 1.0,
     "thermal": 1.0
    }
   },
   "full": {
-   "macro_f1": 0.9972127377883074,
+   "macro_f1": 1.0,
    "per_class_f1": {
-    "gpu_degradation": 0.9921259842519685,
+    "gpu_degradation": 1.0,
     "healthy": 1.0,
-    "network_domain": 0.9911504424778761,
+    "network_domain": 1.0,
     "phase_change": 1.0,
     "straggler": 1.0,
     "thermal": 1.0
    }
   },
   "label_permutation": {
-   "macro_f1": 0.1351150472757572,
+   "macro_f1": 0.1369168794272329,
    "per_class_f1": {
-    "gpu_degradation": 0.12030075187969924,
-    "healthy": 0.38632478632478634,
-    "network_domain": 0.017094017094017096,
-    "phase_change": 0.06451612903225806,
-    "straggler": 0.1461187214611872,
-    "thermal": 0.07633587786259542
+    "gpu_degradation": 0.13043478260869565,
+    "healthy": 0.4969512195121951,
+    "network_domain": 0.038461538461538464,
+    "phase_change": 0.0,
+    "straggler": 0.06263048016701461,
+    "thermal": 0.09302325581395349
    }
   }
  },
+ "allocation_holdout": {
+  "by_profile": {
+   "nodes8_packed": {
+    "linear": 0.9976604874159402,
+    "n": 387,
+    "trees": 0.6616935742200013
+   },
+   "rack1_packed": {
+    "linear": 0.5592063919561899,
+    "n": 280,
+    "trees": 0.4545454545454546
+   },
+   "racks2_packed": {
+    "linear": 1.0,
+    "n": 303,
+    "trees": 0.7169290251311793
+   },
+   "scatter32": {
+    "linear": 0.8545155146205015,
+    "n": 373,
+    "trees": 0.7136104881835431
+   },
+   "scatter64": {
+    "linear": 0.8260329531051965,
+    "n": 250,
+    "trees": 0.6780045351473923
+   }
+  },
+  "macro_f1": 0.6576084290622494,
+  "macro_f1_logreg": 0.9098730341283532,
+  "per_class_f1": {
+   "gpu_degradation": 1.0,
+   "healthy": 0.7248322147651006,
+   "network_domain": 0.42424242424242425,
+   "phase_change": 0.0,
+   "straggler": 0.9857651245551602,
+   "thermal": 0.8108108108108109
+  },
+  "per_class_f1_logreg": {
+   "gpu_degradation": 1.0,
+   "healthy": 0.9243243243243243,
+   "network_domain": 0.7466666666666667,
+   "phase_change": 0.8095238095238095,
+   "straggler": 1.0,
+   "thermal": 0.9787234042553191
+  },
+  "test_windows": 1593,
+  "train_windows": 1593
+ },
  "cv_by_seed": {
   "folds": [
-   0.6868464052287582,
+   1.0,
+   0.9957928333091542,
    1.0,
    1.0,
-   0.9791186440677966,
    1.0
   ],
-  "macro_f1_mean": 0.9331930098593109,
-  "macro_f1_std": 0.12343851529034841
+  "macro_f1_mean": 0.999158566661831,
+  "macro_f1_std": 0.0016828666763383016
  },
  "dataset": {
+  "allocations": {
+   "full": 1593,
+   "nodes8_packed": 387,
+   "rack1_packed": 280,
+   "racks2_packed": 303,
+   "scatter32": 373,
+   "scatter64": 250
+  },
   "class_by_mesh": {
    "coarse": {
-    "gpu_degradation": 55,
-    "healthy": 228,
-    "network_domain": 47,
-    "phase_change": 50,
-    "straggler": 95,
-    "thermal": 56
+    "gpu_degradation": 110,
+    "healthy": 456,
+    "network_domain": 94,
+    "phase_change": 100,
+    "straggler": 190,
+    "thermal": 112
    },
    "fine": {
-    "gpu_degradation": 55,
-    "healthy": 228,
-    "network_domain": 47,
-    "phase_change": 50,
-    "straggler": 95,
-    "thermal": 56
+    "gpu_degradation": 110,
+    "healthy": 456,
+    "network_domain": 94,
+    "phase_change": 100,
+    "straggler": 190,
+    "thermal": 112
    },
    "medium": {
-    "gpu_degradation": 55,
-    "healthy": 228,
-    "network_domain": 47,
-    "phase_change": 50,
-    "straggler": 95,
-    "thermal": 56
+    "gpu_degradation": 110,
+    "healthy": 456,
+    "network_domain": 94,
+    "phase_change": 100,
+    "straggler": 190,
+    "thermal": 112
    }
   },
   "class_counts": {
-   "gpu_degradation": 165,
-   "healthy": 684,
-   "network_domain": 141,
-   "phase_change": 150,
-   "straggler": 285,
-   "thermal": 168
+   "gpu_degradation": 330,
+   "healthy": 1368,
+   "network_domain": 282,
+   "phase_change": 300,
+   "straggler": 570,
+   "thermal": 336
   },
   "features": [
    "job_iter_cv",
@@ -188,7 +245,15 @@
    "node_mem_pressure_mean"
   ],
   "n_features": 50,
-  "runs": 90,
+  "runs": 180,
+  "runs_by_allocation": {
+   "full": 90,
+   "nodes8_packed": 22,
+   "rack1_packed": 16,
+   "racks2_packed": 17,
+   "scatter32": 21,
+   "scatter64": 14
+  },
   "seeds": [
    1,
    2,
@@ -201,21 +266,21 @@
    4
   ],
   "window_iterations": 100,
-  "windows_labelled": 1593,
-  "windows_test": 639,
-  "windows_train": 954,
-  "windows_ttd": 8190
+  "windows_labelled": 3186,
+  "windows_test": 1278,
+  "windows_train": 1908,
+  "windows_ttd": 16380
  },
- "git_commit": "1cdb71a",
+ "git_commit": "a5153b7",
  "importance": {
   "by_table": {
    "agg": 0.0,
-   "gpu": 0.196767878974094,
-   "job": 0.3786589967600484,
+   "gpu": 0.20162570820710637,
+   "job": 0.2348877306019398,
    "nic": 0.0,
    "node": 0.0,
-   "port": 0.0,
-   "rank": 0.28537866688284347,
+   "port": 0.18604480208475047,
+   "rank": 0.19767352532216287,
    "storage": 0.0
   },
   "per_feature": {
@@ -308,14 +373,14 @@
     }
    },
    "gpu_rack_temp_drift": {
-    "macro": 0.196767878974094,
+    "macro": 0.20162570820710637,
     "per_class": {
      "gpu_degradation": 0.0,
-     "healthy": 0.10776444049875125,
-     "network_domain": 0.02574862758064833,
-     "phase_change": 0.03624855787257364,
-     "straggler": 0.14453545536178275,
-     "thermal": 0.866310192530808
+     "healthy": 0.11412213010914715,
+     "network_domain": 0.03453914244856735,
+     "phase_change": 0.05187289372839619,
+     "straggler": 0.14031598021712244,
+     "thermal": 0.8689041027394051
     }
    },
    "gpu_rack_temp_rise": {
@@ -385,6 +450,17 @@
     }
    },
    "job_compute_max_rel": {
+    "macro": 0.0009459110771624793,
+    "per_class": {
+     "gpu_degradation": 0.0,
+     "healthy": 0.0,
+     "network_domain": 0.0,
+     "phase_change": 0.0,
+     "straggler": 0.0021862727298787243,
+     "thermal": 0.003489193733096152
+    }
+   },
+   "job_halo_max_rel": {
     "macro": 0.0,
     "per_class": {
      "gpu_degradation": 0.0,
@@ -393,17 +469,6 @@
      "phase_change": 0.0,
      "straggler": 0.0,
      "thermal": 0.0
-    }
-   },
-   "job_halo_max_rel": {
-    "macro": 0.17139208040294884,
-    "per_class": {
-     "gpu_degradation": 0.0,
-     "healthy": 0.09232053571841461,
-     "network_domain": 0.8481319564499434,
-     "phase_change": 0.0,
-     "straggler": 0.0679389379845936,
-     "thermal": 0.01996105226474123
     }
    },
    "job_halo_over_compute": {
@@ -440,36 +505,36 @@
     }
    },
    "job_output_duty": {
-    "macro": 0.2055239618989437,
+    "macro": 0.19196789938363001,
     "per_class": {
-     "gpu_degradation": 0.050297415389905974,
-     "healthy": 0.14188802585986895,
-     "network_domain": 0.07171454504197868,
-     "phase_change": 0.8982803104086623,
-     "straggler": 0.026750485467371687,
-     "thermal": 0.044212989225874556
+     "gpu_degradation": 0.06436558870808806,
+     "healthy": 0.14785595812586555,
+     "network_domain": 0.047852623229678495,
+     "phase_change": 0.8667478821371792,
+     "straggler": 0.004415032523965978,
+     "thermal": 0.02057031157700282
     }
    },
    "job_spread_rel": {
-    "macro": 0.0017429544581558435,
+    "macro": 0.04178483666231627,
     "per_class": {
      "gpu_degradation": 0.0,
-     "healthy": 0.0022570577236489696,
+     "healthy": 0.08406321279016353,
      "network_domain": 0.0,
      "phase_change": 0.0,
-     "straggler": 0.0,
-     "thermal": 0.00820066902528609
+     "straggler": 0.15027710409391085,
+     "thermal": 0.016368703089823255
     }
    },
    "job_sync_rel": {
-    "macro": 0.0,
+    "macro": 0.0001890834788310351,
     "per_class": {
      "gpu_degradation": 0.0,
      "healthy": 0.0,
      "network_domain": 0.0,
      "phase_change": 0.0,
-     "straggler": 0.0,
-     "thermal": 0.0
+     "straggler": 0.0004376367614879584,
+     "thermal": 0.0006968641114982521
     }
    },
    "nic_drop_rate": {
@@ -561,14 +626,14 @@
     }
    },
    "port_down_frac": {
-    "macro": 0.0,
+    "macro": 0.18604480208475047,
     "per_class": {
-     "gpu_degradation": 0.0,
-     "healthy": 0.0,
-     "network_domain": 0.0,
+     "gpu_degradation": 0.049884604560260136,
+     "healthy": 0.11592145245069381,
+     "network_domain": 0.890776867968734,
      "phase_change": 0.0,
-     "straggler": 0.0,
-     "thermal": 0.0
+     "straggler": 0.04696938355053282,
+     "thermal": 0.01271650397828199
     }
    },
    "port_down_max_domain": {
@@ -682,14 +747,14 @@
     }
    },
    "rank_pace_top1": {
-    "macro": 0.19776478516818086,
+    "macro": 0.19448864376907346,
     "per_class": {
-     "gpu_degradation": 0.8764965384403933,
-     "healthy": 0.038855648520233356,
-     "network_domain": 0.04691929544299074,
+     "gpu_degradation": 0.9016832791130607,
+     "healthy": 0.069305974719385,
+     "network_domain": 0.0,
      "phase_change": 0.0,
-     "straggler": 0.19999805102079524,
-     "thermal": 0.024319177584672502
+     "straggler": 0.18181770575731654,
+     "thermal": 0.014124903024678481
     }
    },
    "rank_pace_top3": {
@@ -704,14 +769,14 @@
     }
    },
    "rank_wait_min_rel": {
-    "macro": 0.0876138817146626,
+    "macro": 0.0031848815530894216,
     "per_class": {
-     "gpu_degradation": 0.10067758363307573,
-     "healthy": 0.055985059041383935,
-     "network_domain": 0.035189894774209085,
+     "gpu_degradation": 0.0,
+     "healthy": 0.00546799376415652,
+     "network_domain": 0.0,
      "phase_change": 0.0,
-     "straggler": 0.22433609039830632,
-     "thermal": 0.10949466244100041
+     "straggler": 0.012944431442881755,
+     "thermal": 0.0006968641114982521
     }
    },
    "storage_active_frac": {
@@ -774,15 +839,15 @@
    "gpu_degradation": [
     [
      "rank_pace_top1",
-     0.8765
-    ],
-    [
-     "rank_wait_min_rel",
-     0.1007
+     0.9017
     ],
     [
      "job_output_duty",
-     0.0503
+     0.0644
+    ],
+    [
+     "port_down_frac",
+     0.0499
     ],
     [
      "storage_write_lat_mean",
@@ -792,47 +857,47 @@
    "healthy": [
     [
      "job_output_duty",
-     0.1419
+     0.1479
+    ],
+    [
+     "port_down_frac",
+     0.1159
     ],
     [
      "gpu_rack_temp_drift",
-     0.1078
+     0.1141
     ],
     [
-     "job_halo_max_rel",
-     0.0923
-    ],
-    [
-     "rank_wait_min_rel",
-     0.056
+     "job_spread_rel",
+     0.0841
     ]
    ],
    "network_domain": [
     [
-     "job_halo_max_rel",
-     0.8481
+     "port_down_frac",
+     0.8908
     ],
     [
      "job_output_duty",
-     0.0717
+     0.0479
     ],
     [
-     "rank_pace_top1",
-     0.0469
+     "gpu_rack_temp_drift",
+     0.0345
     ],
     [
-     "rank_wait_min_rel",
-     0.0352
+     "storage_write_lat_mean",
+     0.0
     ]
    ],
    "phase_change": [
     [
      "job_output_duty",
-     0.8983
+     0.8667
     ],
     [
      "gpu_rack_temp_drift",
-     0.0362
+     0.0519
     ],
     [
      "storage_write_lat_mean",
@@ -845,38 +910,38 @@
    ],
    "straggler": [
     [
-     "rank_wait_min_rel",
-     0.2243
+     "rank_pace_top1",
+     0.1818
     ],
     [
-     "rank_pace_top1",
-     0.2
+     "job_spread_rel",
+     0.1503
     ],
     [
      "gpu_rack_temp_drift",
-     0.1445
+     0.1403
     ],
     [
-     "job_halo_max_rel",
-     0.0679
+     "port_down_frac",
+     0.047
     ]
    ],
    "thermal": [
     [
      "gpu_rack_temp_drift",
-     0.8663
-    ],
-    [
-     "rank_wait_min_rel",
-     0.1095
+     0.8689
     ],
     [
      "job_output_duty",
-     0.0442
+     0.0206
+    ],
+    [
+     "job_spread_rel",
+     0.0164
     ],
     [
      "rank_pace_top1",
-     0.0243
+     0.0141
     ]
    ]
   }
@@ -886,19 +951,19 @@
    "hgb": {
     "gpu_degradation": {
      "auroc": 1.0,
-     "n_windows": 63,
+     "n_windows": 126,
      "precision_at_1": 1.0,
      "precision_at_k": 1.0
     },
     "straggler": {
      "auroc": 1.0,
-     "n_windows": 114,
+     "n_windows": 228,
      "precision_at_1": 1.0,
      "precision_at_k": 1.0
     },
     "thermal": {
      "auroc": 1.0,
-     "n_windows": 72,
+     "n_windows": 144,
      "precision_at_1": 1.0,
      "precision_at_k": 1.0
     }
@@ -906,41 +971,41 @@
    "iforest": {
     "gpu_degradation": {
      "auroc": 1.0,
-     "n_windows": 63,
+     "n_windows": 126,
      "precision_at_1": 1.0,
      "precision_at_k": 1.0
     },
     "straggler": {
-     "auroc": 0.9961587213878969,
-     "n_windows": 114,
-     "precision_at_1": 0.7982456140350878,
-     "precision_at_k": 0.7295321637426901
+     "auroc": 0.9952340786521887,
+     "n_windows": 228,
+     "precision_at_1": 0.8991228070175439,
+     "precision_at_k": 0.8274853801169592
     },
     "thermal": {
-     "auroc": 0.9255054615162037,
-     "n_windows": 72,
-     "precision_at_1": 1.0,
-     "precision_at_k": 0.7999131944444444
+     "auroc": 0.9173018844039351,
+     "n_windows": 144,
+     "precision_at_1": 0.9930555555555556,
+     "precision_at_k": 0.8181423611111112
     }
    },
    "pca": {
     "gpu_degradation": {
      "auroc": 1.0,
-     "n_windows": 63,
+     "n_windows": 126,
      "precision_at_1": 1.0,
      "precision_at_k": 1.0
     },
     "straggler": {
      "auroc": 1.0,
-     "n_windows": 114,
+     "n_windows": 228,
      "precision_at_1": 1.0,
      "precision_at_k": 1.0
     },
     "thermal": {
-     "auroc": 1.0,
-     "n_windows": 72,
-     "precision_at_1": 1.0,
-     "precision_at_k": 1.0
+     "auroc": 0.8611111111111112,
+     "n_windows": 144,
+     "precision_at_1": 0.8611111111111112,
+     "precision_at_k": 0.8611111111111112
     }
    }
   },
@@ -962,37 +1027,37 @@
    "e_node_nic_err_rate",
    "e_node_tx_rel_med"
   ],
-  "gpu_rows_test": 81792,
-  "gpu_rows_train": 122112,
+  "gpu_rows_test": 114208,
+  "gpu_rows_train": 170752,
   "rack": {
    "hgb": {
     "network_domain": {
-     "n_windows": 57,
+     "n_windows": 114,
      "top1_accuracy": 1.0
     },
     "thermal": {
-     "n_windows": 72,
+     "n_windows": 144,
      "top1_accuracy": 1.0
     }
    },
    "iforest": {
     "network_domain": {
-     "n_windows": 57,
-     "top1_accuracy": 0.0
+     "n_windows": 114,
+     "top1_accuracy": 0.2543859649122807
     },
     "thermal": {
-     "n_windows": 72,
+     "n_windows": 144,
      "top1_accuracy": 1.0
     }
    },
    "pca": {
     "network_domain": {
-     "n_windows": 57,
+     "n_windows": 114,
      "top1_accuracy": 1.0
     },
     "thermal": {
-     "n_windows": 72,
-     "top1_accuracy": 1.0
+     "n_windows": 144,
+     "top1_accuracy": 0.8263888888888888
     }
    }
   },
@@ -1012,38 +1077,38 @@
   ],
   "run_level": {
    "gpu_degradation": {
-    "ml_localised": 6,
-    "n": 6,
-    "rules_localised": 6
+    "ml_localised": 12,
+    "n": 12,
+    "rules_localised": 12
    },
    "network_domain": {
-    "ml_localised": 6,
-    "n": 6,
-    "rules_localised": 6
+    "ml_localised": 12,
+    "n": 12,
+    "rules_localised": 12
    },
    "straggler": {
-    "ml_localised": 6,
-    "n": 6,
-    "rules_localised": 6
+    "ml_localised": 12,
+    "n": 12,
+    "rules_localised": 12
    },
    "thermal": {
-    "ml_localised": 6,
-    "n": 6,
-    "rules_localised": 6
+    "ml_localised": 12,
+    "n": 12,
+    "rules_localised": 12
    }
   }
  },
  "mesh_holdout": {
   "coarse+fine->medium": {
-   "macro_f1": 0.7111396969896872,
+   "macro_f1": 1.0,
    "macro_f1_logreg": 1.0,
-   "macro_f1_with_absolute": 0.7111396969896872,
+   "macro_f1_with_absolute": 1.0,
    "per_class_f1": {
     "gpu_degradation": 1.0,
-    "healthy": 0.0,
-    "network_domain": 0.2883435582822086,
+    "healthy": 1.0,
+    "network_domain": 1.0,
     "phase_change": 1.0,
-    "straggler": 0.978494623655914,
+    "straggler": 1.0,
     "thermal": 1.0
    },
    "per_class_f1_logreg": {
@@ -1056,16 +1121,16 @@
    }
   },
   "coarse+medium->fine": {
-   "macro_f1": 0.7960902568368514,
+   "macro_f1": 0.914878132510212,
    "macro_f1_logreg": 1.0,
-   "macro_f1_with_absolute": 0.7960902568368514,
+   "macro_f1_with_absolute": 0.914878132510212,
    "per_class_f1": {
-    "gpu_degradation": 0.6748466257668712,
+    "gpu_degradation": 0.8058608058608059,
     "healthy": 1.0,
     "network_domain": 1.0,
     "phase_change": 1.0,
-    "straggler": 1.0,
-    "thermal": 0.1016949152542373
+    "straggler": 0.9973614775725593,
+    "thermal": 0.686046511627907
    },
    "per_class_f1_logreg": {
     "gpu_degradation": 1.0,
@@ -1077,65 +1142,97 @@
    }
   },
   "medium+fine->coarse": {
-   "macro_f1": 0.6640760910672415,
-   "macro_f1_logreg": 0.6738100447486729,
-   "macro_f1_with_absolute": 0.6640760910672415,
+   "macro_f1": 0.7685141607288521,
+   "macro_f1_logreg": 0.8093525764801562,
+   "macro_f1_with_absolute": 0.7858804994028695,
    "per_class_f1": {
     "gpu_degradation": 1.0,
-    "healthy": 0.0,
+    "healthy": 0.2792452830188679,
     "network_domain": 1.0,
     "phase_change": 1.0,
-    "straggler": 0.42035398230088494,
-    "thermal": 0.5641025641025641
+    "straggler": 0.48717948717948717,
+    "thermal": 0.8446601941747572
    },
    "per_class_f1_logreg": {
-    "gpu_degradation": 0.8333333333333334,
-    "healthy": 0.0,
+    "gpu_degradation": 0.694006309148265,
+    "healthy": 0.6238805970149254,
     "network_domain": 1.0,
     "phase_change": 1.0,
-    "straggler": 0.8051948051948052,
-    "thermal": 0.4043321299638989
+    "straggler": 0.7465618860510805,
+    "thermal": 0.7916666666666666
    }
   }
  },
  "run_level": {
+  "by_allocation": {
+   "full": {
+    "ml_correct": 36,
+    "n": 36,
+    "rules_correct": 36
+   },
+   "nodes8_packed": {
+    "ml_correct": 9,
+    "n": 9,
+    "rules_correct": 9
+   },
+   "rack1_packed": {
+    "ml_correct": 7,
+    "n": 7,
+    "rules_correct": 6
+   },
+   "racks2_packed": {
+    "ml_correct": 6,
+    "n": 6,
+    "rules_correct": 6
+   },
+   "scatter32": {
+    "ml_correct": 8,
+    "n": 8,
+    "rules_correct": 5
+   },
+   "scatter64": {
+    "ml_correct": 6,
+    "n": 6,
+    "rules_correct": 6
+   }
+  },
   "ml_accuracy": 1.0,
   "per_scenario": {
    "gpu_degradation": {
-    "ml_correct": 6,
-    "n": 6,
-    "rules_correct": 6,
-    "rules_localised": 6
+    "ml_correct": 12,
+    "n": 12,
+    "rules_correct": 12,
+    "rules_localised": 12
    },
    "healthy": {
-    "ml_correct": 6,
-    "n": 6,
-    "rules_correct": 6,
+    "ml_correct": 12,
+    "n": 12,
+    "rules_correct": 11,
     "rules_localised": null
    },
    "network_domain": {
-    "ml_correct": 6,
-    "n": 6,
-    "rules_correct": 6,
-    "rules_localised": 6
+    "ml_correct": 12,
+    "n": 12,
+    "rules_correct": 12,
+    "rules_localised": 12
    },
    "phase_change": {
-    "ml_correct": 6,
-    "n": 6,
-    "rules_correct": 6,
+    "ml_correct": 12,
+    "n": 12,
+    "rules_correct": 9,
     "rules_localised": null
    },
    "straggler": {
-    "ml_correct": 6,
-    "n": 6,
-    "rules_correct": 6,
-    "rules_localised": 6
+    "ml_correct": 12,
+    "n": 12,
+    "rules_correct": 12,
+    "rules_localised": 12
    },
    "thermal": {
-    "ml_correct": 6,
-    "n": 6,
-    "rules_correct": 6,
-    "rules_localised": 6
+    "ml_correct": 12,
+    "n": 12,
+    "rules_correct": 12,
+    "rules_localised": 12
    }
   },
   "rollup_min_windows": 3,
@@ -1144,8 +1241,548 @@
    "3": 1.0,
    "5": 1.0
   },
-  "rules_accuracy": 1.0,
+  "rules_accuracy": 0.9444444444444444,
   "runs": [
+   {
+    "mesh": "medium",
+    "ml": "gpu_degradation",
+    "ml_correct": true,
+    "onset": 433,
+    "rules": "gpu_degradation",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_nodes8_packed/gpu_degradation__medium__seed3",
+    "scenario": "gpu_degradation",
+    "seed": 3,
+    "target_gpus": [
+     "r3n3g1"
+    ],
+    "target_rack": "r3"
+   },
+   {
+    "mesh": "medium",
+    "ml": "gpu_degradation",
+    "ml_correct": true,
+    "onset": 367,
+    "rules": "gpu_degradation",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_nodes8_packed/gpu_degradation__medium__seed4",
+    "scenario": "gpu_degradation",
+    "seed": 4,
+    "target_gpus": [
+     "r0n2g0"
+    ],
+    "target_rack": "r0"
+   },
+   {
+    "mesh": "fine",
+    "ml": "healthy",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "healthy",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_nodes8_packed/healthy__fine__seed3",
+    "scenario": "healthy",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "medium",
+    "ml": "healthy",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "healthy",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_nodes8_packed/healthy__medium__seed4",
+    "scenario": "healthy",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "medium",
+    "ml": "network_domain",
+    "ml_correct": true,
+    "onset": 440,
+    "rules": "network_domain",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_nodes8_packed/network_domain__medium__seed4",
+    "scenario": "network_domain",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": "r0"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "phase_change",
+    "ml_correct": true,
+    "onset": 451,
+    "rules": "phase_change",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_nodes8_packed/phase_change__coarse__seed3",
+    "scenario": "phase_change",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "phase_change",
+    "ml_correct": true,
+    "onset": 305,
+    "rules": "phase_change",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_nodes8_packed/phase_change__fine__seed4",
+    "scenario": "phase_change",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "straggler",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_nodes8_packed/straggler__fine__seed3",
+    "scenario": "straggler",
+    "seed": 3,
+    "target_gpus": [
+     "r0n3g0",
+     "r0n3g6",
+     "r3n1g0"
+    ],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "thermal",
+    "ml_correct": true,
+    "onset": 285,
+    "rules": "thermal",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_nodes8_packed/thermal__fine__seed4",
+    "scenario": "thermal",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": "r1"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "gpu_degradation",
+    "ml_correct": true,
+    "onset": 367,
+    "rules": "gpu_degradation",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_rack1_packed/gpu_degradation__coarse__seed4",
+    "scenario": "gpu_degradation",
+    "seed": 4,
+    "target_gpus": [
+     "r3n0g4"
+    ],
+    "target_rack": "r3"
+   },
+   {
+    "mesh": "fine",
+    "ml": "gpu_degradation",
+    "ml_correct": true,
+    "onset": 433,
+    "rules": "gpu_degradation",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_rack1_packed/gpu_degradation__fine__seed3",
+    "scenario": "gpu_degradation",
+    "seed": 3,
+    "target_gpus": [
+     "r3n3g4"
+    ],
+    "target_rack": "r3"
+   },
+   {
+    "mesh": "medium",
+    "ml": "healthy",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "healthy",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_rack1_packed/healthy__medium__seed3",
+    "scenario": "healthy",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "coarse",
+    "ml": "network_domain",
+    "ml_correct": true,
+    "onset": 491,
+    "rules": "network_domain",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_rack1_packed/network_domain__coarse__seed3",
+    "scenario": "network_domain",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": "r3"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "network_domain",
+    "ml_correct": true,
+    "onset": 440,
+    "rules": "network_domain",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_rack1_packed/network_domain__coarse__seed4",
+    "scenario": "network_domain",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": "r2"
+   },
+   {
+    "mesh": "fine",
+    "ml": "network_domain",
+    "ml_correct": true,
+    "onset": 440,
+    "rules": "network_domain",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_rack1_packed/network_domain__fine__seed4",
+    "scenario": "network_domain",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": "r1"
+   },
+   {
+    "mesh": "medium",
+    "ml": "phase_change",
+    "ml_correct": true,
+    "onset": 305,
+    "rules": "healthy",
+    "rules_correct": false,
+    "rules_localised": null,
+    "run_id": "alloc_rack1_packed/phase_change__medium__seed4",
+    "scenario": "phase_change",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "coarse",
+    "ml": "phase_change",
+    "ml_correct": true,
+    "onset": 305,
+    "rules": "phase_change",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_racks2_packed/phase_change__coarse__seed4",
+    "scenario": "phase_change",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "coarse",
+    "ml": "straggler",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_racks2_packed/straggler__coarse__seed3",
+    "scenario": "straggler",
+    "seed": 3,
+    "target_gpus": [
+     "r2n1g0",
+     "r2n1g6",
+     "r3n1g0"
+    ],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "straggler",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_racks2_packed/straggler__fine__seed4",
+    "scenario": "straggler",
+    "seed": 4,
+    "target_gpus": [
+     "r0n3g0",
+     "r3n0g7",
+     "r3n2g1"
+    ],
+    "target_rack": null
+   },
+   {
+    "mesh": "medium",
+    "ml": "straggler",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_racks2_packed/straggler__medium__seed4",
+    "scenario": "straggler",
+    "seed": 4,
+    "target_gpus": [
+     "r1n3g0",
+     "r2n0g7",
+     "r2n2g1"
+    ],
+    "target_rack": null
+   },
+   {
+    "mesh": "medium",
+    "ml": "thermal",
+    "ml_correct": true,
+    "onset": 397,
+    "rules": "thermal",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_racks2_packed/thermal__medium__seed3",
+    "scenario": "thermal",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": "r0"
+   },
+   {
+    "mesh": "medium",
+    "ml": "thermal",
+    "ml_correct": true,
+    "onset": 285,
+    "rules": "thermal",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_racks2_packed/thermal__medium__seed4",
+    "scenario": "thermal",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": "r3"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "gpu_degradation",
+    "ml_correct": true,
+    "onset": 433,
+    "rules": "gpu_degradation",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter32/gpu_degradation__coarse__seed3",
+    "scenario": "gpu_degradation",
+    "seed": 3,
+    "target_gpus": [
+     "r3n0g4"
+    ],
+    "target_rack": "r3"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "healthy",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": false,
+    "rules_localised": null,
+    "run_id": "alloc_scatter32/healthy__coarse__seed3",
+    "scenario": "healthy",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "phase_change",
+    "ml_correct": true,
+    "onset": 451,
+    "rules": "healthy",
+    "rules_correct": false,
+    "rules_localised": null,
+    "run_id": "alloc_scatter32/phase_change__fine__seed3",
+    "scenario": "phase_change",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "medium",
+    "ml": "phase_change",
+    "ml_correct": true,
+    "onset": 451,
+    "rules": "healthy",
+    "rules_correct": false,
+    "rules_localised": null,
+    "run_id": "alloc_scatter32/phase_change__medium__seed3",
+    "scenario": "phase_change",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "coarse",
+    "ml": "straggler",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter32/straggler__coarse__seed4",
+    "scenario": "straggler",
+    "seed": 4,
+    "target_gpus": [
+     "r1n0g3",
+     "r2n0g3",
+     "r3n0g0"
+    ],
+    "target_rack": null
+   },
+   {
+    "mesh": "medium",
+    "ml": "straggler",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "straggler",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter32/straggler__medium__seed3",
+    "scenario": "straggler",
+    "seed": 3,
+    "target_gpus": [
+     "r0n0g4",
+     "r0n0g7",
+     "r2n0g4"
+    ],
+    "target_rack": null
+   },
+   {
+    "mesh": "coarse",
+    "ml": "thermal",
+    "ml_correct": true,
+    "onset": 397,
+    "rules": "thermal",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter32/thermal__coarse__seed3",
+    "scenario": "thermal",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": "r1"
+   },
+   {
+    "mesh": "fine",
+    "ml": "thermal",
+    "ml_correct": true,
+    "onset": 397,
+    "rules": "thermal",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter32/thermal__fine__seed3",
+    "scenario": "thermal",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": "r1"
+   },
+   {
+    "mesh": "fine",
+    "ml": "gpu_degradation",
+    "ml_correct": true,
+    "onset": 367,
+    "rules": "gpu_degradation",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter64/gpu_degradation__fine__seed4",
+    "scenario": "gpu_degradation",
+    "seed": 4,
+    "target_gpus": [
+     "r0n1g0"
+    ],
+    "target_rack": "r0"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "healthy",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "healthy",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_scatter64/healthy__coarse__seed4",
+    "scenario": "healthy",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "healthy",
+    "ml_correct": true,
+    "onset": null,
+    "rules": "healthy",
+    "rules_correct": true,
+    "rules_localised": null,
+    "run_id": "alloc_scatter64/healthy__fine__seed4",
+    "scenario": "healthy",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": null
+   },
+   {
+    "mesh": "fine",
+    "ml": "network_domain",
+    "ml_correct": true,
+    "onset": 491,
+    "rules": "network_domain",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter64/network_domain__fine__seed3",
+    "scenario": "network_domain",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": "r2"
+   },
+   {
+    "mesh": "medium",
+    "ml": "network_domain",
+    "ml_correct": true,
+    "onset": 491,
+    "rules": "network_domain",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter64/network_domain__medium__seed3",
+    "scenario": "network_domain",
+    "seed": 3,
+    "target_gpus": [],
+    "target_rack": "r2"
+   },
+   {
+    "mesh": "coarse",
+    "ml": "thermal",
+    "ml_correct": true,
+    "onset": 285,
+    "rules": "thermal",
+    "rules_correct": true,
+    "rules_localised": true,
+    "run_id": "alloc_scatter64/thermal__coarse__seed4",
+    "scenario": "thermal",
+    "seed": 4,
+    "target_gpus": [],
+    "target_rack": "r1"
+   },
    {
     "mesh": "coarse",
     "ml": "gpu_degradation",
@@ -1689,7 +2326,15 @@
   ]
  },
  "seed_holdout": {
-  "accuracy": 0.9984350547730829,
+  "accuracy": 1.0,
+  "accuracy_by_allocation": {
+   "full": 1.0,
+   "nodes8_packed": 1.0,
+   "rack1_packed": 1.0,
+   "racks2_packed": 1.0,
+   "scatter32": 1.0,
+   "scatter64": 1.0
+  },
   "confusion": [
    [
     1.0,
@@ -1710,9 +2355,9 @@
    [
     0.0,
     0.0,
-    0.9825,
+    1.0,
     0.0,
-    0.0175,
+    0.0,
     0.0
    ],
    [
@@ -1742,7 +2387,7 @@
   ],
   "confusion_counts": [
    [
-    267,
+    534,
     0,
     0,
     0,
@@ -1750,26 +2395,26 @@
     0
    ],
    [
+    0,
+    228,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
     0,
     114,
     0,
     0,
-    0,
-    0
-   ],
-   [
-    0,
-    0,
-    56,
-    0,
-    1,
     0
    ],
    [
     0,
     0,
     0,
-    72,
+    144,
     0,
     0
    ],
@@ -1778,7 +2423,7 @@
     0,
     0,
     0,
-    63,
+    126,
     0
    ],
    [
@@ -1787,18 +2432,18 @@
     0,
     0,
     0,
-    66
+    132
    ]
   ],
   "false_alarm_rate": 0.0,
   "fault_precision": 1.0,
   "fault_recall": 1.0,
-  "macro_f1": 0.9972127377883074,
-  "n": 639,
+  "macro_f1": 1.0,
+  "n": 1278,
   "per_class_f1": {
-   "gpu_degradation": 0.9921259842519685,
+   "gpu_degradation": 1.0,
    "healthy": 1.0,
-   "network_domain": 0.9911504424778761,
+   "network_domain": 1.0,
    "phase_change": 1.0,
    "straggler": 1.0,
    "thermal": 1.0
@@ -1858,7 +2503,7 @@
   ],
   "confusion_counts": [
    [
-    267,
+    534,
     0,
     0,
     0,
@@ -1866,26 +2511,26 @@
     0
    ],
    [
+    0,
+    228,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
     0,
     114,
     0,
     0,
-    0,
     0
    ],
    [
+    4,
     0,
     0,
-    57,
-    0,
-    0,
-    0
-   ],
-   [
-    2,
-    0,
-    0,
-    70,
+    140,
     0,
     0
    ],
@@ -1894,7 +2539,7 @@
     0,
     0,
     0,
-    63,
+    126,
     0
    ],
    [
@@ -1903,14 +2548,14 @@
     0,
     0,
     0,
-    66
+    132
    ]
   ],
   "false_alarm_rate": 0.0,
   "fault_precision": 1.0,
   "fault_recall": 0.9934640522875817,
   "macro_f1": 0.9970306916123608,
-  "n": 639,
+  "n": 1278,
   "per_class_f1": {
    "gpu_degradation": 1.0,
    "healthy": 0.996268656716418,
@@ -1927,6 +2572,336 @@
   },
   "rule": "2 consecutive windows",
   "runs": [
+   {
+    "detected": true,
+    "latency_iterations": 108,
+    "latency_s": 46.919748143846164,
+    "mesh": "medium",
+    "onset": 433,
+    "run_id": "alloc_nodes8_packed/gpu_degradation__medium__seed3",
+    "run_length_s": 399.6220310667568,
+    "scenario": "gpu_degradation",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 104,
+    "latency_s": 45.38292917382026,
+    "mesh": "medium",
+    "onset": 367,
+    "run_id": "alloc_nodes8_packed/gpu_degradation__medium__seed4",
+    "run_length_s": 406.4252730099115,
+    "scenario": "gpu_degradation",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 51,
+    "latency_s": 19.32474809989037,
+    "mesh": "medium",
+    "onset": 440,
+    "run_id": "alloc_nodes8_packed/network_domain__medium__seed4",
+    "run_length_s": 367.47403037469076,
+    "scenario": "network_domain",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 70,
+    "latency_s": 3.8495957355390686,
+    "mesh": "coarse",
+    "onset": 451,
+    "run_id": "alloc_nodes8_packed/phase_change__coarse__seed3",
+    "run_length_s": 52.81361648396618,
+    "scenario": "phase_change",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 56,
+    "latency_s": 88.32900771986453,
+    "mesh": "fine",
+    "onset": 305,
+    "run_id": "alloc_nodes8_packed/phase_change__fine__seed4",
+    "run_length_s": 1549.7764223399379,
+    "scenario": "phase_change",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 100,
+    "latency_s": 170.20167518611788,
+    "mesh": "fine",
+    "onset": 1,
+    "run_id": "alloc_nodes8_packed/straggler__fine__seed3",
+    "run_length_s": 1715.1048439282113,
+    "scenario": "straggler",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 36,
+    "latency_s": 54.2181088622159,
+    "mesh": "fine",
+    "onset": 285,
+    "run_id": "alloc_nodes8_packed/thermal__fine__seed4",
+    "run_length_s": 1604.2609171588329,
+    "scenario": "thermal",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 104,
+    "latency_s": 9.555329080304546,
+    "mesh": "coarse",
+    "onset": 367,
+    "run_id": "alloc_rack1_packed/gpu_degradation__coarse__seed4",
+    "run_length_s": 85.49136763193985,
+    "scenario": "gpu_degradation",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 108,
+    "latency_s": 397.22629814375273,
+    "mesh": "fine",
+    "onset": 433,
+    "run_id": "alloc_rack1_packed/gpu_degradation__fine__seed3",
+    "run_length_s": 3368.7184400502424,
+    "scenario": "gpu_degradation",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 20,
+    "latency_s": 1.5315629857097477,
+    "mesh": "coarse",
+    "onset": 491,
+    "run_id": "alloc_rack1_packed/network_domain__coarse__seed3",
+    "run_length_s": 73.88446088341325,
+    "scenario": "network_domain",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 21,
+    "latency_s": 1.5295271917270412,
+    "mesh": "coarse",
+    "onset": 440,
+    "run_id": "alloc_rack1_packed/network_domain__coarse__seed4",
+    "run_length_s": 73.51762017669881,
+    "scenario": "network_domain",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 21,
+    "latency_s": 61.58253515663591,
+    "mesh": "fine",
+    "onset": 440,
+    "run_id": "alloc_rack1_packed/network_domain__fine__seed4",
+    "run_length_s": 2936.0577701639763,
+    "scenario": "network_domain",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 56,
+    "latency_s": 38.08282996448901,
+    "mesh": "medium",
+    "onset": 305,
+    "run_id": "alloc_rack1_packed/phase_change__medium__seed4",
+    "run_length_s": 673.2976186165236,
+    "scenario": "phase_change",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 56,
+    "latency_s": 3.050501765294781,
+    "mesh": "coarse",
+    "onset": 305,
+    "run_id": "alloc_racks2_packed/phase_change__coarse__seed4",
+    "run_length_s": 53.15702900563378,
+    "scenario": "phase_change",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 100,
+    "latency_s": 5.7173772542717405,
+    "mesh": "coarse",
+    "onset": 1,
+    "run_id": "alloc_racks2_packed/straggler__coarse__seed3",
+    "run_length_s": 57.545586040997655,
+    "scenario": "straggler",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 100,
+    "latency_s": 172.41017568659768,
+    "mesh": "fine",
+    "onset": 1,
+    "run_id": "alloc_racks2_packed/straggler__fine__seed4",
+    "run_length_s": 1696.1157243567523,
+    "scenario": "straggler",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 100,
+    "latency_s": 40.3308623406349,
+    "mesh": "medium",
+    "onset": 1,
+    "run_id": "alloc_racks2_packed/straggler__medium__seed4",
+    "run_length_s": 396.8988567221331,
+    "scenario": "straggler",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 54,
+    "latency_s": 18.969308465214084,
+    "mesh": "medium",
+    "onset": 397,
+    "run_id": "alloc_racks2_packed/thermal__medium__seed3",
+    "run_length_s": 372.79685429094457,
+    "scenario": "thermal",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 56,
+    "latency_s": 19.60723283511018,
+    "mesh": "medium",
+    "onset": 285,
+    "run_id": "alloc_racks2_packed/thermal__medium__seed4",
+    "run_length_s": 376.5335533409728,
+    "scenario": "thermal",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 108,
+    "latency_s": 9.627534511015035,
+    "mesh": "coarse",
+    "onset": 433,
+    "run_id": "alloc_scatter32/gpu_degradation__coarse__seed3",
+    "run_length_s": 83.40259560798684,
+    "scenario": "gpu_degradation",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 70,
+    "latency_s": 213.182009533705,
+    "mesh": "fine",
+    "onset": 451,
+    "run_id": "alloc_scatter32/phase_change__fine__seed3",
+    "run_length_s": 3001.225703853885,
+    "scenario": "phase_change",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 70,
+    "latency_s": 48.243431290861906,
+    "mesh": "medium",
+    "onset": 451,
+    "run_id": "alloc_scatter32/phase_change__medium__seed3",
+    "run_length_s": 678.4881477617309,
+    "scenario": "phase_change",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 100,
+    "latency_s": 8.487955225638297,
+    "mesh": "coarse",
+    "onset": 1,
+    "run_id": "alloc_scatter32/straggler__coarse__seed4",
+    "run_length_s": 83.44183615937085,
+    "scenario": "straggler",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 100,
+    "latency_s": 75.44604663327742,
+    "mesh": "medium",
+    "onset": 1,
+    "run_id": "alloc_scatter32/straggler__medium__seed3",
+    "run_length_s": 758.5185551988654,
+    "scenario": "straggler",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 74,
+    "latency_s": 5.518435015557895,
+    "mesh": "coarse",
+    "onset": 397,
+    "run_id": "alloc_scatter32/thermal__coarse__seed3",
+    "run_length_s": 74.93838726119455,
+    "scenario": "thermal",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 44,
+    "latency_s": 130.03341422720564,
+    "mesh": "fine",
+    "onset": 397,
+    "run_id": "alloc_scatter32/thermal__fine__seed3",
+    "run_length_s": 2957.5057038538857,
+    "scenario": "thermal",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 104,
+    "latency_s": 193.9312157232455,
+    "mesh": "fine",
+    "onset": 367,
+    "run_id": "alloc_scatter64/gpu_degradation__fine__seed4",
+    "run_length_s": 1738.381028670952,
+    "scenario": "gpu_degradation",
+    "seed": 4
+   },
+   {
+    "detected": true,
+    "latency_iterations": 50,
+    "latency_s": 80.0317386508176,
+    "mesh": "fine",
+    "onset": 491,
+    "run_id": "alloc_scatter64/network_domain__fine__seed3",
+    "run_length_s": 1555.742157343831,
+    "scenario": "network_domain",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 50,
+    "latency_s": 19.303891217581878,
+    "mesh": "medium",
+    "onset": 491,
+    "run_id": "alloc_scatter64/network_domain__medium__seed3",
+    "run_length_s": 369.5965005534873,
+    "scenario": "network_domain",
+    "seed": 3
+   },
+   {
+    "detected": true,
+    "latency_iterations": 96,
+    "latency_s": 4.8561727679893565,
+    "mesh": "coarse",
+    "onset": 285,
+    "run_id": "alloc_scatter64/thermal__coarse__seed4",
+    "run_length_s": 50.60872283932968,
+    "scenario": "thermal",
+    "seed": 4
+   },
    {
     "detected": true,
     "latency_iterations": 108,
@@ -1995,8 +2970,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 50,
-    "latency_s": 2.324661315283972,
+    "latency_iterations": 70,
+    "latency_s": 3.228372884810792,
     "mesh": "coarse",
     "onset": 491,
     "run_id": "network_domain__coarse__seed3",
@@ -2006,8 +2981,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 51,
-    "latency_s": 2.271336936221452,
+    "latency_iterations": 71,
+    "latency_s": 3.2308541754552635,
     "mesh": "coarse",
     "onset": 440,
     "run_id": "network_domain__coarse__seed4",
@@ -2017,8 +2992,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 60,
-    "latency_s": 53.080928716169296,
+    "latency_iterations": 50,
+    "latency_s": 44.31778315278473,
     "mesh": "fine",
     "onset": 491,
     "run_id": "network_domain__fine__seed3",
@@ -2028,8 +3003,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 61,
-    "latency_s": 53.56463886671588,
+    "latency_iterations": 51,
+    "latency_s": 44.385581546603646,
     "mesh": "fine",
     "onset": 440,
     "run_id": "network_domain__fine__seed4",
@@ -2039,8 +3014,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 60,
-    "latency_s": 13.883432169739876,
+    "latency_iterations": 50,
+    "latency_s": 11.595611194953392,
     "mesh": "medium",
     "onset": 491,
     "run_id": "network_domain__medium__seed3",
@@ -2050,8 +3025,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 61,
-    "latency_s": 14.006357900909649,
+    "latency_iterations": 51,
+    "latency_s": 11.582731775281616,
     "mesh": "medium",
     "onset": 440,
     "run_id": "network_domain__medium__seed4",
@@ -2193,8 +3168,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 44,
-    "latency_s": 1.71935481784978,
+    "latency_iterations": 94,
+    "latency_s": 3.641196473898944,
     "mesh": "coarse",
     "onset": 397,
     "run_id": "thermal__coarse__seed3",
@@ -2204,8 +3179,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 56,
-    "latency_s": 2.1952645631175827,
+    "latency_iterations": 86,
+    "latency_s": 3.3358334684942204,
     "mesh": "coarse",
     "onset": 285,
     "run_id": "thermal__coarse__seed4",
@@ -2215,8 +3190,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 24,
-    "latency_s": 18.747080876092696,
+    "latency_iterations": 44,
+    "latency_s": 34.20622527489911,
     "mesh": "fine",
     "onset": 397,
     "run_id": "thermal__fine__seed3",
@@ -2226,8 +3201,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 26,
-    "latency_s": 20.42012907812736,
+    "latency_iterations": 36,
+    "latency_s": 28.096554149062655,
     "mesh": "fine",
     "onset": 285,
     "run_id": "thermal__fine__seed4",
@@ -2237,8 +3212,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 34,
-    "latency_s": 6.560101205930366,
+    "latency_iterations": 44,
+    "latency_s": 8.47232810421444,
     "mesh": "medium",
     "onset": 397,
     "run_id": "thermal__medium__seed3",
@@ -2248,8 +3223,8 @@
    },
    {
     "detected": true,
-    "latency_iterations": 36,
-    "latency_s": 6.9823752516747035,
+    "latency_iterations": 56,
+    "latency_s": 10.78475815095905,
     "mesh": "medium",
     "onset": 285,
     "run_id": "thermal__medium__seed4",
@@ -2260,136 +3235,136 @@
   ],
   "summary": {
    "gpu_degradation/coarse": {
-    "detected": 2,
-    "max_s": 5.094951803640548,
+    "detected": 4,
+    "max_s": 9.627534511015035,
     "median_iterations": 106.0,
-    "median_s": 4.990229780969967,
-    "n": 2
+    "median_s": 7.325140441972547,
+    "n": 4
    },
    "gpu_degradation/fine": {
-    "detected": 2,
-    "max_s": 104.0850229878788,
+    "detected": 4,
+    "max_s": 397.22629814375273,
     "median_iterations": 106.0,
-    "median_s": 102.70894860086224,
-    "n": 2
+    "median_s": 149.00811935556214,
+    "n": 4
    },
    "gpu_degradation/medium": {
-    "detected": 2,
-    "max_s": 25.614190445176746,
+    "detected": 4,
+    "max_s": 46.919748143846164,
     "median_iterations": 106.0,
-    "median_s": 25.27253653210981,
-    "n": 2
+    "median_s": 35.4985598094985,
+    "n": 4
    },
    "network_domain/coarse": {
-    "detected": 2,
-    "max_s": 2.324661315283972,
-    "median_iterations": 50.5,
-    "median_s": 2.297999125752712,
-    "n": 2
+    "detected": 4,
+    "max_s": 3.2308541754552635,
+    "median_iterations": 45.5,
+    "median_s": 2.37996793526027,
+    "n": 4
    },
    "network_domain/fine": {
-    "detected": 2,
-    "max_s": 53.56463886671588,
-    "median_iterations": 60.5,
-    "median_s": 53.32278379144259,
-    "n": 2
+    "detected": 4,
+    "max_s": 80.0317386508176,
+    "median_iterations": 50.0,
+    "median_s": 52.98405835161978,
+    "n": 4
    },
    "network_domain/medium": {
-    "detected": 2,
-    "max_s": 14.006357900909649,
-    "median_iterations": 60.5,
-    "median_s": 13.944895035324762,
-    "n": 2
+    "detected": 4,
+    "max_s": 19.32474809989037,
+    "median_iterations": 50.5,
+    "median_s": 15.449751206267635,
+    "n": 4
    },
    "phase_change/coarse": {
-    "detected": 2,
-    "max_s": 3.0291506290262795,
+    "detected": 4,
+    "max_s": 3.8495957355390686,
     "median_iterations": 63.0,
-    "median_s": 2.706763437593138,
-    "n": 2
+    "median_s": 3.0398261971605303,
+    "n": 4
    },
    "phase_change/fine": {
-    "detected": 2,
-    "max_s": 60.751668417180724,
+    "detected": 4,
+    "max_s": 213.182009533705,
     "median_iterations": 63.0,
-    "median_s": 54.36191821089672,
-    "n": 2
+    "median_s": 74.54033806852263,
+    "n": 4
    },
    "phase_change/medium": {
-    "detected": 2,
-    "max_s": 15.004431863206321,
+    "detected": 4,
+    "max_s": 48.243431290861906,
     "median_iterations": 63.0,
-    "median_s": 13.427722597028783,
-    "n": 2
+    "median_s": 26.543630913847664,
+    "n": 4
    },
    "straggler/coarse": {
-    "detected": 2,
-    "max_s": 4.3941504280180705,
+    "detected": 4,
+    "max_s": 8.487955225638297,
     "median_iterations": 100.0,
-    "median_s": 4.383989241706115,
-    "n": 2
+    "median_s": 5.0557638411449055,
+    "n": 4
    },
    "straggler/fine": {
-    "detected": 2,
-    "max_s": 88.74146412903099,
+    "detected": 4,
+    "max_s": 172.41017568659768,
     "median_iterations": 100.0,
-    "median_s": 88.4182997559725,
-    "n": 2
+    "median_s": 129.47156965757443,
+    "n": 4
    },
    "straggler/medium": {
-    "detected": 2,
-    "max_s": 21.901972104329896,
+    "detected": 4,
+    "max_s": 75.44604663327742,
     "median_iterations": 100.0,
-    "median_s": 21.824312448788717,
-    "n": 2
+    "median_s": 31.116417222482397,
+    "n": 4
    },
    "thermal/coarse": {
-    "detected": 2,
-    "max_s": 2.1952645631175827,
-    "median_iterations": 50.0,
-    "median_s": 1.9573096904836813,
-    "n": 2
+    "detected": 4,
+    "max_s": 5.518435015557895,
+    "median_iterations": 90.0,
+    "median_s": 4.24868462094415,
+    "n": 4
    },
    "thermal/fine": {
-    "detected": 2,
-    "max_s": 20.42012907812736,
-    "median_iterations": 25.0,
-    "median_s": 19.583604977110028,
-    "n": 2
+    "detected": 4,
+    "max_s": 130.03341422720564,
+    "median_iterations": 40.0,
+    "median_s": 44.212167068557505,
+    "n": 4
    },
    "thermal/medium": {
-    "detected": 2,
-    "max_s": 6.9823752516747035,
-    "median_iterations": 35.0,
-    "median_s": 6.771238228802535,
-    "n": 2
+    "detected": 4,
+    "max_s": 19.60723283511018,
+    "median_iterations": 55.0,
+    "median_s": 14.877033308086567,
+    "n": 4
    }
   }
  },
  "timing_s": {
-  "ablations": 45.9,
-  "classifier": 21.3,
-  "importance": 30.0,
-  "localisation": 15.7,
-  "run_level_ttd": 14.9,
-  "total": 129.2,
-  "unsupervised": 1.3
+  "ablations": 18.6,
+  "classifier": 5.8,
+  "importance": 14.2,
+  "localisation": 7.3,
+  "run_level_ttd": 3.8,
+  "total": 50.2,
+  "unsupervised": 0.4
  },
  "unsupervised_window": {
   "isolation_forest": {
-   "auroc_is_fault": 0.6848220769789397,
+   "auroc_is_fault": 0.6887377573652083,
    "flag_rate_by_class": {
-    "gpu_degradation": 1.0,
-    "healthy": 0.4044943820224719,
-    "network_domain": 1.0,
+    "gpu_degradation": 0.873015873015873,
+    "healthy": 0.19288389513108614,
+    "network_domain": 0.3508771929824561,
     "phase_change": 1.0,
-    "straggler": 0.9649122807017544,
-    "thermal": 0.7083333333333334
+    "straggler": 0.631578947368421,
+    "thermal": 0.7986111111111112
    }
   },
   "pca_residual": {
-   "auroc_is_fault": 0.9555928477497104,
-   "n_components": 7
+   "auroc_is_fault": 0.9513435003631082,
+   "n_components": 10
   },
   "threshold": "95th percentile of healthy training windows"
  }
