@@ -234,7 +234,7 @@ def build(metrics: dict, figures: dict) -> str:
     and what it will take to move it onto a real fleet. Every number here comes from a prototype you can re-run.
   </p>
   <div style="margin-top:8mm;display:flex;gap:16mm">
-    <div><div class="big a">{ds['runs']}</div><div class="lab">simulated runs, {len(ds['seeds'])} seeds</div></div>
+    <div><div class="big a">{ds['runs']}</div><div class="lab">simulated runs, {len(ds['seeds'])} seeds, {len(ds.get('allocations', {}))} allocations</div></div>
     <div><div class="big c">{ds['windows_labelled']:,}</div><div class="lab">labelled windows</div></div>
     <div><div class="big b">{sh['macro_f1']:.3f}</div><div class="lab">macro-F1, held-out seeds</div></div>
     <div><div class="big g">{ml_runs}/{n_test_runs}</div><div class="lab">held-out runs classified</div></div>
@@ -252,7 +252,8 @@ def build(metrics: dict, figures: dict) -> str:
   <div class="body">
     <div class="col" style="flex:1.1">{gate_ladder_svg()}
       <p class="note" style="margin-top:1mm">On {n_test_runs} held-out runs with <b>re-drawn targets and onsets</b> the rules still score
-      <b>{rules_runs}/{n_test_runs}</b>, the learned model <b>{ml_runs}/{n_test_runs}</b> (slide 7). Six clean signatures are easy for both.</p>
+      <b>{rules_runs}/{n_test_runs}</b>, the learned model <b>{ml_runs}/{n_test_runs}</b> (slide 7). On full-cluster jobs both are perfect;
+      every rule miss is a subset-allocation job, where thresholds tuned for 128 ranks no longer hold.</p>
       <div class="card" style="margin-bottom:0;padding:2.5mm 4mm"><h3>What learning adds</h3>
         <p>The <b>joint signature</b> across tables, a <b>score per window</b> as the run progresses, a <b>ranked list</b> of suspects, and an operating point the operator chooses.</p></div>
     </div>
@@ -342,13 +343,15 @@ def build(metrics: dict, figures: dict) -> str:
         </g>
       </svg>
       <div class="cols3" style="margin-top:3mm">
-        <div class="card a" style="margin:0"><h3>Why re-draw targets</h3><p>With the yaml's fixed targets, "rack 1" means thermal and "iteration 300" means network. A model would learn the label, not the physics. Per-seed variants are built in memory; the simulator is untouched.</p></div>
-        <div class="card b" style="margin:0"><h3>Why seeds, not noise</h3><p>Seeds key every stochastic stream by entity identity, so each seed relocates the straggler cohort and moves the onset. That is augmentation with physically consistent samples.</p></div>
+        <div class="card a" style="margin:0;padding:2.5mm 3.5mm"><h3>Why re-draw targets</h3><p>With fixed targets, "rack 1" means thermal and "iteration 300" means network: a model would learn the label, not the physics. Variants are built in memory; the simulator is untouched.</p></div>
+        <div class="card b" style="margin:0;padding:2.5mm 3.5mm"><h3>Why seeds, not noise</h3><p>Seeds key every stochastic stream by entity identity, so each seed relocates the straggler cohort and moves the onset: augmentation with physically consistent samples.</p></div>
+        <div class="card c" style="margin:0;padding:2.5mm 3.5mm"><h3>And the job's allocation</h3><p>Each cell is also simulated as a subset job: 32 or 64 ranks packed into one or two racks, onto eight random nodes, or scattered. Idle GPUs stay in telemetry, so features are computed over the GPUs the job occupies.</p></div>
       </div>
     </div>
     <div class="col narrow">
       {hbar_chart(rows, width=260, vmax=max(cc.values()), fmt=lambda v: f"{int(v)}", label_w=70, title=f"labelled windows by class ({ds['windows_labelled']:,})")}
-      <p class="note">{ds['runs']} runs &middot; seeds {', '.join(map(str, ds['seeds']))} &middot; test seeds <b>{', '.join(map(str, ds['test_seeds']))}</b>.
+      <p class="note">{ds['runs']} runs &middot; seeds {', '.join(map(str, ds['seeds']))} &middot; test seeds <b>{', '.join(map(str, ds['test_seeds']))}</b>
+      &middot; allocations: {', '.join(f"{k} ({v})" for k, v in ds.get('runs_by_allocation', {}).items())} runs.
       Healthy dominates because every pre-onset window is healthy. The classifier is class-weighted and all scores are macro-averaged.</p>
       <p class="note">Orange = fault classes. <code>phase_change</code> is a labelled non-fault: a 10 % slowdown with clean hardware.</p>
     </div>
@@ -457,7 +460,8 @@ def build(metrics: dict, figures: dict) -> str:
         <tr class="hl"><td><b>All</b></td><td class="n"><b>{ml_runs}/{n_test_runs}</b></td><td class="n"><b>{rules_runs}/{n_test_runs}</b></td></tr>
       </table>
       <p class="note">ML verdict = most frequent non-healthy class if it appears in &ge; 3 windows (2 &rarr; {pct(rl['rollup_sensitivity']['2'])}, 5 &rarr; {pct(rl['rollup_sensitivity']['5'])}).
-      Rules = <code>diagnose()</code> mapped onto the same six classes.</p>
+      Rules = <code>diagnose()</code> mapped onto the same six classes. Subset-allocation runs: ML {sum(v['ml_correct'] for k, v in rl.get('by_allocation', {}).items() if k != 'full')}/{sum(v['n'] for k, v in rl.get('by_allocation', {}).items() if k != 'full')},
+      rules {sum(v['rules_correct'] for k, v in rl.get('by_allocation', {}).items() if k != 'full')}/{sum(v['n'] for k, v in rl.get('by_allocation', {}).items() if k != 'full')}.</p>
     </div>
   </div>
   <div class="num">7</div>
@@ -468,6 +472,17 @@ def build(metrics: dict, figures: dict) -> str:
     for k, v in mh.items():
         mh_rows.append((k.replace("->", " → ") + " · trees", v["macro_f1"], B))
         mh_rows.append((k.replace("->", " → ") + " · linear", v["macro_f1_logreg"], C))
+    ah = metrics.get("allocation_holdout")
+    if ah:
+        mh_rows.append(("full cluster → subset jobs · trees", ah["macro_f1"], B))
+        mh_rows.append(("full cluster → subset jobs · linear", ah["macro_f1_logreg"], C))
+    alloc_card = ""
+    if ah:
+        prof = ", ".join(f"{k} {v['trees']:.2f}/{v['linear']:.2f}" for k, v in sorted(ah["by_profile"].items()))
+        weakest = min(ah["per_class_f1"].items(), key=lambda kv: kv[1])
+        alloc_card = f"""<div class="card b" style="margin-top:2.5mm"><h3>Full-cluster jobs in, subset jobs out</h3>
+        <p>{ah['train_windows']} full-allocation windows to train, {ah['test_windows']} subset windows to test, all seeds. Trees {ah['macro_f1']:.2f}, linear {ah['macro_f1_logreg']:.2f};
+        trees' weakest class <b>{SHORT[weakest[0]]}</b> at {weakest[1]:.2f}. By profile, trees/linear: {prof}.</p></div>"""
     abl_rows = [(k, v["macro_f1"], B if k == "full" else A) for k, v in abl.items() if k != "label_permutation"]
     abl_rows.sort(key=lambda r: r[0] != "full")
     worst = min(mh.items(), key=lambda kv: kv[1]["macro_f1"])
@@ -475,22 +490,19 @@ def build(metrics: dict, figures: dict) -> str:
 <section class="slide">
   <div class="eyebrow">Generalisation</div>
   <h2>Does it transfer to a workload it has not seen?</h2>
-  <p class="dek">Holding out a whole mesh is the closest thing to a domain-shift test the simulator offers: a different
-  cell count, a different iteration time, a different number of samples per window.</p>
+  <p class="dek">Two domain-shift tests the simulator offers: hold out a whole mesh (different cell count, iteration time and
+  samples per window), and train on full-cluster jobs only, then test on jobs that leave most of the cluster idle.</p>
   <div class="body">
     <div class="col">
-      {hbar_chart(mh_rows, width=340, fmt=lambda v: f"{v:.2f}", label_w=170, row_h=16, title="macro-F1 by hold-out: gradient-boosted trees vs logistic regression")}
-      <div class="card c" style="margin-top:3mm"><h3>Trees do not extrapolate</h3>
-        <p>In-distribution the two models tie. Hold out a mesh and the trees fall to {min(v['macro_f1'] for v in mh.values()):.2f}&ndash;{max(v['macro_f1'] for v in mh.values()):.2f}
-        while the linear model keeps {min(v['macro_f1_logreg'] for v in mh.values()):.2f}&ndash;{max(v['macro_f1_logreg'] for v in mh.values()):.2f} on two of three: a split threshold learned inside one mesh's healthy range says nothing about values outside it,
-        whereas a linear boundary on dimensionless features extends. Recommendation: a linear or monotone-constrained model as the fleet default, trees as the in-distribution refinement.</p></div>
+      {hbar_chart(mh_rows, width=360, fmt=lambda v: f"{v:.2f}", label_w=190, row_h=15, title="macro-F1 by hold-out: gradient-boosted trees vs logistic regression")}
+      <div class="card c" style="margin-top:2.5mm"><h3>Trees do not extrapolate</h3>
+        <p>In-distribution the two models tie. Under every shift the linear model holds up better: a split threshold learned inside one regime's healthy range says nothing outside it, whereas a linear boundary on dimensionless features extends. Fleet default: a linear or monotone-constrained model, trees as the in-distribution refinement.</p></div>
     </div>
     <div class="col">
-      {hbar_chart(abl_rows, width=340, fmt=lambda v: f"{v:.2f}", label_w=150, title="ablations, seed hold-out")}
-      <p class="note">Removing any one table costs almost nothing: the signatures are redundant across tables. Adding absolute iteration time or the checkpoint-to-iteration ratio does not help in-distribution, and both are mesh identifiers that broke the first mesh hold-out.</p>
-      <div class="card a" style="margin-top:3mm"><h3>Hardest transfer: {worst[0].replace('->', ' → ')}</h3>
-        <p>Both models struggle (trees {worst[1]['macro_f1']:.2f}, linear {worst[1]['macro_f1_logreg']:.2f}); healthy F1 {worst[1]['per_class_f1_logreg']['healthy']:.2f}.
-        The coarse mesh carries a genuine 4 % load imbalance on healthy hardware, so "one rank always paces the barrier" is normal there and a straggler elsewhere. A fleet has the same problem between applications.</p></div>
+      {hbar_chart(abl_rows, width=360, row_h=14, fmt=lambda v: f"{v:.2f}", label_w=150, title="ablations, seed hold-out")}
+      <p class="note" style="margin-top:1mm">Removing a table costs little: the signatures are redundant, except that the fabric counters are the only witness to a network fault on a single-rack job. Absolute iteration time and the checkpoint ratio are mesh identifiers.</p>
+      {alloc_card}
+      <p class="note">Hardest mesh transfer, {worst[0].replace('->', ' → ')} (trees {worst[1]['macro_f1']:.2f}, linear {worst[1]['macro_f1_logreg']:.2f}): the coarse mesh carries a genuine 4 % load imbalance on healthy hardware, so "one rank always paces the barrier" is normal there and a straggler elsewhere.</p>
     </div>
   </div>
   <div class="num">8</div>
@@ -594,6 +606,12 @@ def build(metrics: dict, figures: dict) -> str:
         feats = ", ".join(f"<code>{f}</code>" for f, _ in imp["top_per_class"][c][:2])
         top_html += f"<tr><td>{SHORT[c]}</td><td>{feats}</td></tr>"
     fr = un["isolation_forest"]["flag_rate_by_class"]
+    if bt.get("port", 0) > 0.01:
+        fabric_card = """<div class="card b" style="margin-top:0"><h3>The fabric counters earn their place</h3>
+        <p>With full-cluster jobs only, every uplink and NIC feature scored zero: halo dispersion already named the network fault. Add single-rack jobs, whose network fault never touches a halo, and the downed-uplink fraction becomes that class's top feature. NIC, storage and node features still score zero.</p></div>"""
+    else:
+        fabric_card = """<div class="card b" style="margin-top:0"><h3>It never touched the fabric counters</h3>
+        <p>Every uplink, NIC and storage feature scores zero: halo dispersion across ranks already names the network fault, output duty the phase change. On a fleet the job-timing tables are the ones most often missing, so the <code>&minus;rank_performance</code> ablation matters more.</p></div>"""
     flag_rows = [(SHORT[c], fr[c], A if c in ("straggler", "network_domain", "thermal", "gpu_degradation") else C) for c in CLASSES]
     slides.append(f"""
 <section class="slide">
@@ -608,8 +626,7 @@ def build(metrics: dict, figures: dict) -> str:
     </div>
     <div class="col narrow" style="flex:0 0 88mm">
       {hbar_chart(flag_rows, width=360, row_h=15, fmt=lambda v: f"{100 * v:.0f}%", label_w=70, title="isolation forest: windows flagged, by true class")}
-      <div class="card b" style="margin-top:0"><h3>It never touched the fabric counters</h3>
-        <p>Every uplink, NIC and storage feature scores zero: halo dispersion across ranks already names the network fault, output duty the phase change. On a fleet the job-timing tables are the ones most often missing, so the <code>&minus;rank_performance</code> ablation matters more.</p></div>
+      {fabric_card}
       <div class="card c" style="margin-top:2mm;margin-bottom:0"><h3>Novelty is not fault</h3>
         <p>Fitted on healthy windows, the isolation forest flags <b>{pct(fr['phase_change'])}</b> of output-campaign windows: the storage channel moved, so the window is novel. Only labelled non-faults tell the two apart.</p></div>
     </div>

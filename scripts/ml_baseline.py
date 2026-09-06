@@ -7,7 +7,11 @@ Three stages, each usable on its own:
 
   generate   simulate every scenario x mesh for each seed into --runs-dir,
              with the fault's target and onset re-drawn per seed so that
-             neither entity identity nor iteration number is a label proxy
+             neither entity identity nor iteration number is a label proxy;
+             each cell is simulated twice, once on the full cluster and once
+             under a re-drawn subset allocation (32 or 64 ranks, packed or
+             scattered over random racks or nodes) so the model also sees jobs
+             that leave most of the cluster idle
   features   cut every run into iteration windows and compute dimensionless,
              fleet-relative features per window, per (window, GPU) and per
              (window, rack); labels come from the INJECTION_APPLIED payload
@@ -36,7 +40,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from gcsim.config import ConfigBundle, derive_rng, load_config  # noqa: E402
+from gcsim.config import AllocationConfig, ConfigBundle, derive_rng, load_config  # noqa: E402
 from gcsim.telemetry import read_run  # noqa: E402
 
 CLASSES = ["healthy", "straggler", "network_domain", "thermal", "gpu_degradation", "phase_change"]
@@ -88,6 +92,35 @@ def variant_bundle(bundle: ConfigBundle, scenario: str, seed: int,
     return dataclasses.replace(bundle, scenarios={**bundle.scenarios, scenario: new_sc}), choice
 
 
+#  Subset allocations. Each is a (n_ranks, pool, placement) shape; the racks or
+#  nodes are drawn per seed. 32 and 64 ranks fit device memory on every mesh
+#  (the fine mesh puts 62.5 GB on a rank at 32; 16 ranks would not fit).
+ALLOC_PROFILES = ("racks2_packed", "rack1_packed", "nodes8_packed", "scatter64", "scatter32")
+
+
+def allocation_variant(seed: int, scenario: str, mesh: str) -> tuple[str, AllocationConfig, str, dict[str, Any]]:
+    """One re-drawn subset allocation for this cell: (profile, allocation, placement, description)."""
+    rng = derive_rng(seed, f"ml:alloc:{scenario}:{mesh}")
+    profile = ALLOC_PROFILES[int(rng.integers(len(ALLOC_PROFILES)))]
+    if profile == "racks2_packed":
+        racks = tuple(sorted(int(r) for r in rng.choice(4, size=2, replace=False)))
+        alloc, placement = AllocationConfig(n_ranks=64, racks=racks), "packed"
+    elif profile == "rack1_packed":
+        alloc, placement = AllocationConfig(n_ranks=32, racks=(int(rng.integers(4)),)), "packed"
+    elif profile == "nodes8_packed":
+        all_nodes = [f"r{r}n{n}" for r in range(4) for n in range(4)]
+        nodes = tuple(sorted(all_nodes[int(i)] for i in rng.choice(16, size=8, replace=False)))
+        alloc, placement = AllocationConfig(n_ranks=64, nodes=nodes), "packed"
+    elif profile == "scatter64":
+        alloc, placement = AllocationConfig(n_ranks=64), "scatter"
+    else:
+        alloc, placement = AllocationConfig(n_ranks=32), "scatter"
+    desc = {"profile": profile, "n_ranks": alloc.n_ranks, "placement": placement,
+            "racks": list(alloc.racks) if alloc.racks else None,
+            "nodes": list(alloc.nodes) if alloc.nodes else None}
+    return profile, alloc, placement, desc
+
+
 def generate(args: argparse.Namespace) -> None:
     from gcsim.scenarios import run_scenario
     runs_dir: Path = args.runs_dir
@@ -95,19 +128,32 @@ def generate(args: argparse.Namespace) -> None:
     manifest_path = runs_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     base = load_config()
-    todo = [(sc, m, s) for s in args.seeds for sc in base.scenario_order for m in args.meshes
-            if sc in args.scenarios]
+    cells = [(sc, m, s) for s in args.seeds for sc in base.scenario_order for m in args.meshes
+             if sc in args.scenarios]
+    todo = [(sc, m, s, False) for sc, m, s in cells]
+    if not args.no_alloc:
+        todo += [(sc, m, s, True) for sc, m, s in cells]
     t_all = time.perf_counter()
-    for n, (scenario, mesh, seed) in enumerate(todo, 1):
+    for n, (scenario, mesh, seed, subset) in enumerate(todo, 1):
         run_id = f"{scenario}__{mesh}__seed{seed}"
-        if (runs_dir / run_id / "summary.json").exists() and not args.force:
-            print(f"[{n:3d}/{len(todo)}] {run_id:38s} cached")
-            continue
         bundle, choice = variant_bundle(base, scenario, seed, not args.no_randomise)
-        print(f"[{n:3d}/{len(todo)}] {run_id:38s} ...", end="", flush=True)
-        res = run_scenario(scenario, mesh=mesh, seed=seed, bundle=bundle, out_dir=runs_dir)
-        manifest[run_id] = {"scenario": scenario, "mesh": mesh, "seed": seed,
-                            "randomised": not args.no_randomise, **choice}
+        alloc_desc: dict[str, Any] = {"profile": "full", "n_ranks": 128, "placement": "packed"}
+        out_dir = runs_dir
+        if subset:
+            #  run_scenario names the directory after (scenario, mesh, seed), so
+            #  each allocation profile gets its own parent directory
+            profile, alloc, placement, alloc_desc = allocation_variant(seed, scenario, mesh)
+            bundle = dataclasses.replace(bundle, workload=dataclasses.replace(
+                bundle.workload, allocation=alloc, placement=placement))
+            out_dir = runs_dir / f"alloc_{profile}"
+        key = f"{out_dir.name}/{run_id}" if subset else run_id
+        if (out_dir / run_id / "summary.json").exists() and not args.force:
+            print(f"[{n:3d}/{len(todo)}] {key:52s} cached")
+            continue
+        print(f"[{n:3d}/{len(todo)}] {key:52s} ...", end="", flush=True)
+        res = run_scenario(scenario, mesh=mesh, seed=seed, bundle=bundle, out_dir=out_dir)
+        manifest[key] = {"scenario": scenario, "mesh": mesh, "seed": seed,
+                         "randomised": not args.no_randomise, **choice, "allocation": alloc_desc}
         manifest_path.write_text(json.dumps(manifest, indent=1, sort_keys=True))
         print(f" {res.wall_seconds:5.1f}s  rules={res.summary['diagnosis']['verdict']}"
               f"/{res.summary['diagnosis']['tier']}")
@@ -217,7 +263,17 @@ class RunTables:
         rank_gpu = rank.drop_duplicates("rank_id").set_index("rank_id")["gpu_id"]
         self.rank_gpu = rank_gpu.reindex(piv("compute_time_s").columns).to_numpy()
 
+        #  A subset job leaves the rest of the cluster idle, and idle GPUs still
+        #  appear in telemetry at idle power and inlet temperature. Every
+        #  fleet-relative feature is therefore computed over the GPUs the job
+        #  occupies, and every rack or node feature over the racks and nodes
+        #  that host at least one rank. On a full allocation this is a no-op.
+        self.allocated = sorted(set(self.rank_gpu))
+        active_nodes = {g[: g.index("g")] for g in self.allocated}
+        active_racks = {g[: g.index("n")] for g in self.allocated}
+
         gpu = frames["telemetry_gpu"]
+        gpu = gpu[gpu["gpu_id"].isin(self.allocated)]
         self.gpu_t = np.sort(gpu["timestamp"].unique())
         gp = lambda c: gpu.pivot(index="timestamp", columns="gpu_id", values=c)  # noqa: E731
         occ = gp("sm_occupancy_pct")
@@ -236,15 +292,17 @@ class RunTables:
         self.racks = np.array(sorted(set(self.gpu_rack)))
         self.rack_mask = np.stack([self.gpu_rack == r for r in self.racks])  # (4, 128)
 
-        self.nic = frames["telemetry_nic"].sort_values(["nic_id", "timestamp"])
+        nic = frames["telemetry_nic"]
+        self.nic = nic[nic["node_id"].isin(active_nodes)].sort_values(["nic_id", "timestamp"])
         ports = frames["telemetry_switch_port"]
-        self.uplinks = ports[(ports["switch_tier"] == "leaf") & (ports["port_role"] == "uplink")] \
-            .sort_values(["port_id", "timestamp"])
+        self.uplinks = ports[(ports["switch_tier"] == "leaf") & (ports["port_role"] == "uplink")
+                             & ports["domain_id"].isin(active_racks)].sort_values(["port_id", "timestamp"])
         agg = frames["telemetry_switch_aggregate"]
-        self.agg = agg[agg["switch_tier"] == "leaf"].copy()
+        self.agg = agg[(agg["switch_tier"] == "leaf") & agg["domain_id"].isin(active_racks)].copy()
         self.agg["oversubscription_ratio"] = self.agg["oversubscription_ratio"].replace(np.inf, 16.0)
         self.storage = frames["telemetry_storage"].sort_values("timestamp")
-        self.node = frames["telemetry_node"]
+        node = frames["telemetry_node"]
+        self.node = node[node["node_id"].isin(active_nodes)]
 
     # -- window helpers ----------------------------------------------------
     def wall_span(self, s: int, e: int) -> tuple[float, float]:
@@ -435,7 +493,8 @@ class RunTables:
             row: dict[str, Any] = {"rack_id": rack}
             if rack_means is not None:
                 others = np.delete(rack_means, k, axis=0)
-                row["k_temp_minus_others_med"] = float((rack_means[k] - np.median(others, axis=0)).mean())
+                row["k_temp_minus_others_med"] = (float((rack_means[k] - np.median(others, axis=0)).mean())
+                                                  if len(others) else np.nan)
                 row["k_temp_rise"] = float(rack_means[k, -1] - rack_means[k, 0])
                 row["k_throttled_frac"] = float(self.throttled[r][:, self.rack_mask[k]].mean())
             up = up_all[up_all["domain_id"] == rack]
@@ -464,11 +523,14 @@ def build_features(args: argparse.Namespace) -> None:
     runs_dir: Path = args.runs_dir
     W, stride = args.window, args.ttd_stride
     run_dirs = sorted(d for d in runs_dir.iterdir() if (d / "summary.json").exists())
+    run_dirs += sorted(p.parent for p in runs_dir.glob("alloc_*/*/summary.json"))
     win_rows, gpu_rows, rack_rows = [], [], []
     t_all = time.perf_counter()
     for n, d in enumerate(run_dirs, 1):
         frames, summary = read_run(d)
         scenario, mesh, seed = summary["scenario"], summary["mesh"], int(summary["seed"])
+        run_key = d.relative_to(runs_dir).as_posix()
+        alloc = d.parent.name[len("alloc_"):] if d.parent != runs_dir else "full"
         truth = _onset_and_targets(frames, scenario)
         rt = RunTables(frames)
         last = int(rt.iters[-1])
@@ -476,7 +538,8 @@ def build_features(args: argparse.Namespace) -> None:
         for s in starts:
             e = s + W
             label, frac = _window_label(scenario, s, e, truth)
-            base = {"run_id": d.name, "scenario": scenario, "mesh": mesh, "seed": seed,
+            base = {"run_id": run_key, "scenario": scenario, "mesh": mesh, "seed": seed,
+                    "alloc": alloc, "n_ranks": int(summary["n_ranks"]), "placement": summary["placement"],
                     "start": s, "end": e, "label": label, "fault_frac": frac,
                     "train_stride": ((s - 1) % args.stride == 0)}
             t0, t1 = rt.wall_span(s, e)
@@ -505,7 +568,7 @@ def build_features(args: argparse.Namespace) -> None:
                 for k, v in base.items():
                     k_[k] = v
                 rack_rows.append(k_)
-        print(f"[{n:3d}/{len(run_dirs)}] {d.name:38s} {len(starts)} windows  "
+        print(f"[{n:3d}/{len(run_dirs)}] {run_key:52s} {len(starts)} windows  "
               f"{time.perf_counter() - t_all:5.0f}s", flush=True)
     out = runs_dir / "ml"
     out.mkdir(exist_ok=True)
@@ -519,8 +582,8 @@ def build_features(args: argparse.Namespace) -> None:
 # train
 # ---------------------------------------------------------------------------
 
-META = {"run_id", "scenario", "mesh", "seed", "start", "end", "label", "fault_frac",
-        "train_stride", "t0", "t1", "positive", "gpu_id", "rack_id", "node_id"}
+META = {"run_id", "scenario", "mesh", "seed", "alloc", "n_ranks", "placement", "start", "end",
+        "label", "fault_frac", "train_stride", "t0", "t1", "positive", "gpu_id", "rack_id", "node_id"}
 TABLE_PREFIXES = ["job", "rank", "gpu", "nic", "port", "agg", "storage", "node"]
 #  Checkpoint time is a wall-clock cost (bytes over a shared filesystem) divided
 #  by an iteration time that differs 20x between meshes, so the ratio identifies
@@ -717,12 +780,18 @@ def train(args: argparse.Namespace) -> None:
             "class_by_mesh": {m: {c: int(((labelled["label"] == c) & (labelled["mesh"] == m)).sum())
                                   for c in CLASSES} for m in MESHES},
             "n_features": len(cols), "features": cols,
+            "allocations": {a: int((labelled["alloc"] == a).sum()) for a in sorted(labelled["alloc"].unique())},
+            "runs_by_allocation": labelled.groupby("alloc")["run_id"].nunique().to_dict(),
         }
     }
     print(f"windows: {len(labelled)} labelled ({len(tr)} train / {len(te)} test), {len(cols)} features")
 
     # -- 1. seed holdout -----------------------------------------------------
     seed_hold, hgb = _fit_eval(tr, te, cols)
+    #  accuracy, not macro-F1: a single profile's held-out windows do not
+    #  contain every class, and a missing class would score F1 = 0
+    seed_hold["accuracy_by_allocation"] = {a: float((hgb.predict(g[cols]) == g["label"]).mean())
+                                           for a, g in te.groupby("alloc")}
     metrics["seed_holdout"] = seed_hold
     metrics["seed_holdout_logreg"], _ = _fit_eval(tr, te, cols, _logreg())
     print(f"seed holdout  HGB macro-F1 {seed_hold['macro_f1']:.3f}   "
@@ -752,6 +821,21 @@ def train(args: argparse.Namespace) -> None:
         print(f"mesh holdout {name:22s} GBT {s_rel['macro_f1']:.3f}  (+absolute {s_abs['macro_f1']:.3f})"
               f"  logreg {s_lr['macro_f1']:.3f}")
     metrics["mesh_holdout"] = mesh_hold
+
+    # -- 3b. allocation hold-out: full-cluster jobs only -> subset jobs ----------
+    full, subset = labelled[labelled["alloc"] == "full"], labelled[labelled["alloc"] != "full"]
+    if len(subset):
+        s_t, m_t = _fit_eval(full, subset, cols)
+        s_l, m_l = _fit_eval(full, subset, cols, _logreg())
+        metrics["allocation_holdout"] = {
+            "train_windows": int(len(full)), "test_windows": int(len(subset)),
+            "macro_f1": s_t["macro_f1"], "per_class_f1": s_t["per_class_f1"],
+            "macro_f1_logreg": s_l["macro_f1"], "per_class_f1_logreg": s_l["per_class_f1"],
+            "by_profile": {a: {"trees": _scores(g["label"], m_t.predict(g[cols]))["macro_f1"],
+                               "linear": _scores(g["label"], m_l.predict(g[cols]))["macro_f1"],
+                               "n": int(len(g))} for a, g in subset.groupby("alloc")},
+        }
+        print(f"allocation holdout full->subset   GBT {s_t['macro_f1']:.3f}  logreg {s_l['macro_f1']:.3f}")
 
     # -- 4. ablations ---------------------------------------------------------
     if not args.no_ablations:
@@ -803,7 +887,11 @@ def train(args: argparse.Namespace) -> None:
     for k in (2, 3, 5):
         sensitivity[k] = float(np.mean([_rollup(g["pred"], k) == g["scenario"].iloc[0]
                                         for _, g in stream.groupby("run_id")]))
-    metrics["run_level"] = {"per_scenario": per_scn, "ml_accuracy": float(runs_df["ml_correct"].mean()),
+    runs_df["alloc"] = runs_df["run_id"].map(lambda r: r.split("/")[0][len("alloc_"):] if "/" in r else "full")
+    by_alloc = {a: {"n": int(len(g)), "ml_correct": int(g["ml_correct"].sum()),
+                    "rules_correct": int(g["rules_correct"].sum())} for a, g in runs_df.groupby("alloc")}
+    metrics["run_level"] = {"per_scenario": per_scn, "by_allocation": by_alloc,
+                            "ml_accuracy": float(runs_df["ml_correct"].mean()),
                             "rules_accuracy": float(runs_df["rules_correct"].mean()),
                             "rollup_min_windows": 3, "rollup_sensitivity": sensitivity,
                             "runs": run_rows}
@@ -930,7 +1018,7 @@ def train(args: argparse.Namespace) -> None:
         ml_loc[rid] = bool(g.groupby("rack_id")["s_hgb"].mean().idxmax() == truths[rid]["rack"])
     loc_run = {}
     for scenario in sorted(FAULT_CLASSES):
-        rids = [r for r in ml_loc if r.startswith(scenario + "__")]
+        rids = [r for r in ml_loc if r.split("/")[-1].startswith(scenario + "__")]
         loc_run[scenario] = {"ml_localised": int(sum(ml_loc[r] for r in rids)), "n": len(rids),
                              "rules_localised": per_scn[scenario]["rules_localised"]}
     metrics["localisation"] = {"gpu": loc_gpu, "rack": rack_top1, "run_level": loc_run,
@@ -949,7 +1037,7 @@ def train(args: argparse.Namespace) -> None:
             "rank_pace_entropy", "storage_write_lat_mean", "gpu_clock_min_rel", "port_down_max_domain",
             "gpu_throttle_reliab_frac", "job_spread_rel", "p_fault"]
     for scenario in CLASSES:
-        g = stream[(stream["scenario"] == scenario) & (stream["mesh"] == "medium")]
+        g = stream[(stream["scenario"] == scenario) & (stream["mesh"] == "medium") & (stream["alloc"] == "full")]
         if g.empty:
             continue
         rid = sorted(g["run_id"].unique())[0]
@@ -999,6 +1087,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-randomise", action="store_true",
                    help="keep the yaml's fixed targets and onsets")
     g.add_argument("--force", action="store_true", help="re-simulate cached runs")
+    g.add_argument("--no-alloc", action="store_true", help="skip the subset-allocation twin of each run")
 
     f = sub.add_parser("features", help="window the runs into feature tables")
     f.add_argument("--window", type=int, default=100, help="iterations per window")
@@ -1017,6 +1106,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--scenarios", nargs="+", default=CLASSES)
         p.add_argument("--no-randomise", action="store_true")
         p.add_argument("--force", action="store_true")
+        p.add_argument("--no-alloc", action="store_true")
         p.add_argument("--window", type=int, default=100)
         p.add_argument("--stride", type=int, default=25)
         p.add_argument("--ttd-stride", type=int, default=10)
