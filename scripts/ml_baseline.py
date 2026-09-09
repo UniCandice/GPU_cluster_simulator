@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """A learned fault classifier on the simulator's own telemetry.
 
-    python scripts/ml_baseline.py all --runs-dir runs_ml --seeds 42 1 2 3 4
+    python scripts/ml_baseline.py --runs-dir runs_ml all --seeds 42 1 2 3 4 5 6 7 8 9
 
 Three stages, each usable on its own:
 
@@ -46,7 +46,8 @@ from gcsim.telemetry import read_run  # noqa: E402
 CLASSES = ["healthy", "straggler", "network_domain", "thermal", "gpu_degradation", "phase_change"]
 FAULT_CLASSES = {"straggler", "network_domain", "thermal", "gpu_degradation"}
 MESHES = ["coarse", "medium", "fine"]
-DEFAULT_SEEDS = [42, 1, 2, 3, 4]
+DEFAULT_SEEDS = [42, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+DEFAULT_TEST_SEEDS = [3, 4, 8, 9]
 
 
 # ---------------------------------------------------------------------------
@@ -1095,7 +1096,7 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--ttd-stride", type=int, default=10, help="stride for time-to-detect")
 
     t = sub.add_parser("train", help="fit, evaluate, write metrics.json")
-    t.add_argument("--test-seeds", type=int, nargs="+", default=[3, 4])
+    t.add_argument("--test-seeds", type=int, nargs="+", default=DEFAULT_TEST_SEEDS)
     t.add_argument("--out", type=Path, default=None, help="default <runs-dir>/ml")
     t.add_argument("--no-ablations", action="store_true")
 
@@ -1110,7 +1111,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--window", type=int, default=100)
         p.add_argument("--stride", type=int, default=25)
         p.add_argument("--ttd-stride", type=int, default=10)
-        p.add_argument("--test-seeds", type=int, nargs="+", default=[3, 4])
+        p.add_argument("--test-seeds", type=int, nargs="+", default=DEFAULT_TEST_SEEDS)
         p.add_argument("--out", type=Path, default=None)
         p.add_argument("--no-ablations", action="store_true")
     return ap
